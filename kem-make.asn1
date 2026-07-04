@@ -1,8 +1,8 @@
-SIT-MAKE-2026 DEFINITIONS IMPLICIT TAGS ::=
+KEM-MAKE-2026 DEFINITIONS IMPLICIT TAGS ::=
 BEGIN
 
 -- ===========================================================================
--- SIT MAKE protocol message syntax.
+-- KEM-MAKE protocol message syntax.
 --
 -- Encoding: DER only. BER (indefinite lengths, non-minimal length forms,
 -- non-canonical constructed/primitive forms) is not permitted on the wire.
@@ -70,8 +70,14 @@ SessionCompletionResponse ::= SEQUENCE {
     m       [0] OCTET STRING OPTIONAL
 }
 
+-- seq is scoped per direction: each peer keeps its own independent
+-- counter, so the same seq value can legitimately appear once from each
+-- peer within a session. seq is therefore NOT session-wide unique on its
+-- own; n is a per-message nonce relied on wherever actual uniqueness is
+-- required (e.g. deriving an AEAD nonce).
 Message ::= SEQUENCE {
     seq  INTEGER,
+    n    OCTET STRING,
     m    OCTET STRING
 }
 

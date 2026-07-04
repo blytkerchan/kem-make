@@ -1,6 +1,6 @@
-# Not required by sit_make.py at runtime.
-# Used only to independently cross-validate sit-make.asn1 against the
+# Not required by kem_make.py at runtime.
+# Used only to independently cross-validate kem-make.asn1 against the
 # hand-coded asn1crypto classes (e.g. compiling the schema and comparing
-# encoded bytes), and to run test_sit_make.py.
+# encoded bytes), and to run test_kem_make.py.
 asn1tools==0.167.0
 pytest==9.1.1

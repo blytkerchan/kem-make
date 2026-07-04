@@ -1,21 +1,25 @@
 """
 Tests for kem_make.py.
 
-Covers, in order of how they came up during development:
+Covers:
   1. Basic round-trip through the versioned envelope.
   2. KEM public key / ciphertext length validation (build and load paths).
   3. Unknown-algorithm-OID rejection.
   4. KeyId: hash is over the whole KemPublicKey DER encoding, not raw key bytes.
   5. cid (correlation id) length validation.
   6. version DEFAULT(0) is omitted from the DER encoding.
-  7. Optional m field: absent vs. present, on both PDUs that carry it.
-  8. DER canonicality check: this is the regression test for the force=True
+  7. Optional "m" field on SessionCompletionRequest / SessionCompletionResponse:
+     absent vs. present.
+  8. Message: seq + nonce ("n") + payload ("m"), all mandatory; nonce is
+     required precisely because seq is scoped per direction and therefore
+     not unique across a session on its own.
+  9. DER canonicality check: this is the regression test for the force=True
      bug -- a naive `obj.dump() != encoded_data` compares asn1crypto's cached
      original bytes against themselves and is a silent no-op. These tests
      fail loudly if that regresses.
-  9. Cross-validation against the independently-authored kem-make.asn1
-     schema, compiled with asn1tools, confirming both describe the same
-     wire format for a type that doesn't require open-type registration.
+  10. Cross-validation against the independently-authored kem-make.asn1
+      schema, compiled with asn1tools, confirming both describe the same
+      wire format for types that don't require open-type registration.
 
 Run with: pytest test_kem_make.py -v
 """
@@ -32,6 +36,7 @@ from kem_make import (
     SessionInitResponse,
     SessionCompletionRequest,
     SessionCompletionResponse,
+    Message,
     MakeMessage,
     MLKEM_PK_LEN,
     MLKEM_CT_LEN,
@@ -112,10 +117,7 @@ def test_kem_public_key_build_rejects_unsupported_level():
 
 
 def test_kem_public_key_load_rejects_truncated_key():
-    # Build a valid one, then hand-corrupt the encoded length so load()
-    # must catch it rather than trusting the OctetString.
     pk = _pk()
-    der = pk.dump()
     truncated = KemPublicKey({
         "algorithm": pk["algorithm"],
         "public_key": pk["public_key"].native[:-1],  # one byte short
@@ -125,7 +127,6 @@ def test_kem_public_key_load_rejects_truncated_key():
 
 
 def test_kem_public_key_load_rejects_unknown_oid():
-    # Construct a KemPublicKey-shaped object under an OID we don't recognize.
     from asn1crypto.algos import AlgorithmIdentifier
     bogus = KemPublicKey({
         "algorithm": AlgorithmIdentifier({"algorithm": "1.2.3.4.5"}),
@@ -148,16 +149,11 @@ def test_key_id_hashes_whole_structure_not_raw_key():
     expected = hashlib.sha256(pk.dump()).digest()
     assert key_id["key_hash"].native == expected
 
-    # Sanity: hashing just the raw key bytes must NOT match -- this is the
-    # behavior we deliberately chose (binds algorithm into the id).
     wrong = hashlib.sha256(pk["public_key"].native).digest()
     assert key_id["key_hash"].native != wrong
 
 
 def test_key_id_changes_if_algorithm_differs_but_key_bytes_same():
-    # Same raw key bytes under two different (hypothetical) algorithm
-    # identifiers must produce different KeyIds, proving the algorithm is
-    # bound into the hash.
     raw = b"\x00" * MLKEM_PK_LEN[768]
     pk_768 = KemPublicKey.build(raw, level=768)
 
@@ -190,13 +186,11 @@ def test_make_message_load_rejects_short_cid():
 
 
 def test_make_message_build_rejects_short_cid_via_manual_construction():
-    # build() takes a uuid.UUID so it can't be handed a short id directly;
-    # confirm the manual-construction path (used by load()) is still guarded.
     with pytest.raises(InvalidCorrelationId):
         MakeMessage({
             "version": 0,
             "cid": b"\x00" * 15,
-            "payload": ("ack", Ack({"h_m": b"x" * 32})),
+            "payload": ("session_completion_response", SessionCompletionResponse({"h_m": b"x" * 32})),
         })._validate_cid()
 
 
@@ -205,77 +199,117 @@ def test_make_message_build_rejects_short_cid_via_manual_construction():
 # ---------------------------------------------------------------------------
 
 def test_version_default_is_omitted_from_der():
-    ack = Ack({"h_m": b"x" * 32})
-    msg_default = MakeMessage.build(uuid.uuid4(), "ack", ack, version=0)
-    msg_explicit_nondefault = MakeMessage.build(uuid.uuid4(), "ack", ack, version=1)
+    scr = SessionCompletionResponse({"h_m": b"x" * 32})
+    msg_default = MakeMessage.build(uuid.uuid4(), "session_completion_response", scr, version=0)
+    msg_explicit_nondefault = MakeMessage.build(uuid.uuid4(), "session_completion_response", scr, version=1)
 
-    # The only structural difference between these two should be the
-    # presence/absence of the version field; the default-valued one must be
-    # shorter by exactly the encoded size of an INTEGER 1 field.
     assert len(msg_default.dump()) < len(msg_explicit_nondefault.dump())
     assert MakeMessage.load(msg_default.dump())["version"].native == 0
 
 
 # ---------------------------------------------------------------------------
-# 7. Optional false_start field
+# 7. Optional "m" field on SessionCompletionRequest / SessionCompletionResponse
 # ---------------------------------------------------------------------------
 
-def test_session_completion_request_false_start_absent():
+def test_session_completion_request_m_absent():
     ct4 = _ct()
     req = SessionCompletionRequest({"c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16})
     parsed = SessionCompletionRequest.load(req.dump())
-    assert parsed["false_start"].native is None
+    assert parsed["m"].native is None
 
 
-def test_session_completion_request_false_start_present():
+def test_session_completion_request_m_present():
     ct4 = _ct()
     req = SessionCompletionRequest({
-        "c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16, "false_start": b"early",
+        "c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16, "m": b"early",
     })
     parsed = SessionCompletionRequest.load(req.dump())
-    assert parsed["false_start"].native == b"early"
+    assert parsed["m"].native == b"early"
 
 
-def test_ack_false_start_absent():
-    ack = Ack({"h_m": b"h" * 32})
-    parsed = Ack.load(ack.dump())
-    assert parsed["false_start"].native is None
+def test_session_completion_response_m_absent():
+    scr = SessionCompletionResponse({"h_m": b"h" * 32})
+    parsed = SessionCompletionResponse.load(scr.dump())
+    assert parsed["m"].native is None
 
 
-def test_ack_false_start_present():
-    ack = Ack({"h_m": b"h" * 32, "false_start": b"early-ack-data"})
-    parsed = Ack.load(ack.dump())
-    assert parsed["false_start"].native == b"early-ack-data"
+def test_session_completion_response_m_present():
+    scr = SessionCompletionResponse({"h_m": b"h" * 32, "m": b"early-response-data"})
+    parsed = SessionCompletionResponse.load(scr.dump())
+    assert parsed["m"].native == b"early-response-data"
 
 
-def test_false_start_absent_is_shorter_on_wire():
+def test_m_absent_is_shorter_on_wire():
     ct4 = _ct()
     without = SessionCompletionRequest({"c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16})
-    with_fs = SessionCompletionRequest({
-        "c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16, "false_start": b"x",
+    with_m = SessionCompletionRequest({
+        "c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16, "m": b"x",
     })
-    assert len(without.dump()) < len(with_fs.dump())
+    assert len(without.dump()) < len(with_m.dump())
 
 
 # ---------------------------------------------------------------------------
-# 8. DER canonicality enforcement (regression test for the force=True bug)
+# 8. Message: seq (per-direction, non-unique) + mandatory nonce + payload
+# ---------------------------------------------------------------------------
+
+def test_message_round_trip():
+    msg = Message({"seq": 1, "n": b"\x00" * 12, "m": b"payload"})
+    parsed = Message.load(msg.dump())
+    assert parsed["seq"].native == 1
+    assert parsed["n"].native == b"\x00" * 12
+    assert parsed["m"].native == b"payload"
+
+
+def test_message_requires_nonce():
+    # Nonce is mandatory precisely because seq is scoped per direction and
+    # is therefore not unique across the session on its own.
+    with pytest.raises(Exception):
+        Message({"seq": 1, "m": b"payload"}).dump()
+
+
+def test_message_requires_seq():
+    with pytest.raises(Exception):
+        Message({"n": b"\x00" * 12, "m": b"payload"}).dump()
+
+
+def test_message_requires_payload():
+    with pytest.raises(Exception):
+        Message({"seq": 1, "n": b"\x00" * 12}).dump()
+
+
+def test_message_same_seq_different_direction_is_permitted_by_the_structure():
+    # The Message type itself does not (and should not) enforce cross-
+    # direction uniqueness of seq -- that's the whole reason the nonce
+    # exists. Two Messages with identical seq but different nonces must
+    # both be valid, independently constructible values.
+    msg_from_alice = Message({"seq": 5, "n": b"\xaa" * 12, "m": b"from alice"})
+    msg_from_bob = Message({"seq": 5, "n": b"\xbb" * 12, "m": b"from bob"})
+
+    assert msg_from_alice["seq"].native == msg_from_bob["seq"].native == 5
+    assert msg_from_alice.dump() != msg_from_bob.dump()
+
+
+@pytest.mark.parametrize("seq", [0, 1, 255, 4294967295])
+def test_message_seq_various_magnitudes(seq):
+    msg = Message({"seq": seq, "n": b"\x00" * 12, "m": b"x"})
+    parsed = Message.load(msg.dump())
+    assert parsed["seq"].native == seq
+
+
+# ---------------------------------------------------------------------------
+# 9. DER canonicality enforcement (regression test for the force=True bug)
 # ---------------------------------------------------------------------------
 
 def test_legitimate_der_is_accepted():
     pk = _pk()
     der = pk.dump()
-    # Must not raise.
-    KemPublicKey.load(der)
+    KemPublicKey.load(der)  # must not raise
 
 
 def test_non_minimal_length_ber_is_rejected():
     pk = _pk()
     der = pk.dump()
 
-    # der[1] is a long-form length byte (0x82: two length octets follow)
-    # because the content exceeds 127 bytes. Pad it to a non-minimal
-    # 3-octet long form (0x83, with a leading zero octet) -- this is valid
-    # BER but not valid DER, since DER requires the minimal-length form.
     assert der[1] == 0x82
     length_value = int.from_bytes(der[2:4], "big")
     padded_length = b"\x00" + length_value.to_bytes(2, "big")
@@ -286,26 +320,18 @@ def test_non_minimal_length_ber_is_rejected():
 
 
 def test_canonicality_check_is_not_a_silent_noop():
-    # Direct regression test for the caching bug: comparing a plain
-    # obj.dump() (which returns cached original bytes) against the input
-    # would make every input "pass" the check, including corrupted ones.
-    # This test fails if _require_der stops using force=True.
     pk = _pk()
     der = pk.dump()
     loaded = KemPublicKey.load(der)
 
-    naive_dump = loaded.dump()          # cached bytes: always equals input
+    naive_dump = loaded.dump()             # cached bytes: always equals input
     forced_dump = loaded.dump(force=True)  # re-derived from parsed values
 
-    assert naive_dump == der  # demonstrates *why* the naive check is a no-op
+    assert naive_dump == der   # demonstrates *why* the naive check is a no-op
     assert forced_dump == der  # and that the correct check still agrees on valid input
 
 
 def test_indefinite_length_ber_fails_to_parse_at_all():
-    # asn1crypto's low-level parser doesn't support indefinite-length BER at
-    # all, so this fails before even reaching our canonicality check. This
-    # test documents that behavior rather than asserting a specific
-    # exception type, since it originates from the parser, not our code.
     pk = _pk()
     der = pk.dump()
     tag = der[0:1]
@@ -317,17 +343,16 @@ def test_indefinite_length_ber_fails_to_parse_at_all():
 
 
 # ---------------------------------------------------------------------------
-# 9. Cross-validation against the independently-authored ASN.1 schema
+# 10. Cross-validation against the independently-authored ASN.1 schema
 # ---------------------------------------------------------------------------
 
-def test_schema_matches_python_classes_for_ack():
+def test_schema_matches_python_classes_for_session_completion_response():
     """
     Requires asn1tools (see requirements-dev.txt). Compiles kem-make.asn1
     independently and confirms it agrees byte-for-byte with asn1crypto on
-    the SessionCompletionResponse type, both with and without the optional 
-    m field.
-    Skips if the schema file or asn1tools isn't available, since this is a
-    dev-only cross-check, not a runtime dependency of sit_make.py.
+    SessionCompletionResponse, both with and without the optional "m"
+    field. Skips if the schema file or asn1tools isn't available, since
+    this is a dev-only cross-check, not a runtime dependency of kem_make.py.
     """
     asn1tools = pytest.importorskip("asn1tools")
     import os
@@ -338,14 +363,36 @@ def test_schema_matches_python_classes_for_ack():
 
     schema = asn1tools.compile_files([schema_path], codec="der")
 
-    ack_absent = Ack({"h_m": b"h" * 16})
-    assert ack_absent.dump() == schema.encode("SessionCompletionResponse", {"hM": b"h" * 16})
+    scr_absent = SessionCompletionResponse({"h_m": b"h" * 16})
+    assert scr_absent.dump() == schema.encode("SessionCompletionResponse", {"hM": b"h" * 16})
 
-    ack_present = Ack({"h_m": b"h" * 16, "false_start": b"fs"})
-    assert ack_present.dump() == schema.encode(
-        "Ack", {"hM": b"h" * 16, "falseStart": b"fs"}
+    scr_present = SessionCompletionResponse({"h_m": b"h" * 16, "m": b"fs"})
+    assert scr_present.dump() == schema.encode(
+        "SessionCompletionResponse", {"hM": b"h" * 16, "m": b"fs"}
     )
 
-    # And the reverse direction: asn1tools decodes what asn1crypto produced.
-    decoded = schema.decode("SessionCompletionResponse", ack_present.dump())
-    assert decoded == {"hM": b"h" * 16, "falseStart": b"fs"}
+    decoded = schema.decode("SessionCompletionResponse", scr_present.dump())
+    assert decoded == {"hM": b"h" * 16, "m": b"fs"}
+
+
+def test_schema_matches_python_classes_for_message():
+    """
+    Cross-checks the new Message type (seq, n, m) against the schema,
+    since it's the newest addition and hasn't been validated this way yet.
+    """
+    asn1tools = pytest.importorskip("asn1tools")
+    import os
+
+    schema_path = os.path.join(os.path.dirname(__file__), "kem-make.asn1")
+    if not os.path.exists(schema_path):
+        pytest.skip("kem-make.asn1 not found alongside this test file")
+
+    schema = asn1tools.compile_files([schema_path], codec="der")
+
+    msg = Message({"seq": 42, "n": b"\x01" * 12, "m": b"payload-bytes"})
+    tools_der = schema.encode("Message", {"seq": 42, "n": b"\x01" * 12, "m": b"payload-bytes"})
+
+    assert msg.dump() == tools_der
+
+    decoded = schema.decode("Message", msg.dump())
+    assert decoded == {"seq": 42, "n": b"\x01" * 12, "m": b"payload-bytes"}

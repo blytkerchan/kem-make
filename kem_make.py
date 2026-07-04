@@ -19,6 +19,13 @@ key id and only requires DER's determinism -- never build the input to the
 hash any other way (e.g. from a re-parsed/re-serialized copy that could in
 principle take a different, still-valid BER encoding elsewhere in a mixed
 toolchain).
+
+Message sequence numbers (see Message): seq is scoped per direction (each
+peer maintains its own independent counter), so the same seq value can
+legitimately occur once from Alice and once from Bob within the same
+session. seq is therefore NOT a session-wide unique value on its own --
+the accompanying nonce "n" is what must be relied on for any use that needs
+actual uniqueness (e.g. deriving an AEAD nonce).
 """
 
 from __future__ import annotations
@@ -229,6 +236,7 @@ class SessionCompletionResponse(Sequence):
 class Message(Sequence):
     _fields = [
         ("seq", Integer),
+        ("n", OctetString),
         ("m", OctetString),
     ]
 
