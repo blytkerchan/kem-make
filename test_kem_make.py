@@ -10,14 +10,19 @@ Covers:
   6. version DEFAULT(0) is omitted from the DER encoding.
   7. Optional "m" field on SessionCompletionRequest / SessionCompletionResponse:
      absent vs. present.
-  8. Message: seq + nonce ("n") + payload ("m"), all mandatory; nonce is
-     required precisely because seq is scoped per direction and therefore
-     not unique across a session on its own.
-  9. DER canonicality check: this is the regression test for the force=True
-     bug -- a naive `obj.dump() != encoded_data` compares asn1crypto's cached
-     original bytes against themselves and is a silent no-op. These tests
-     fail loudly if that regresses.
-  10. Cross-validation against the independently-authored kem-make.asn1
+  8. AEAD negotiation: acceptable_aeads (SessionInitRequest, a list of bare
+     OIDs, forward-compatible with unrecognized algorithms) and chosen_aead
+     (SessionInitResponse, a single bare OID).
+  9. Message: seq + payload only. No nonce field -- uniqueness now comes
+     from (per-direction session key, seq), since each direction has its
+     own independently derived key out of the same HKDF that produces the
+     other session key material. seq alone is legitimately non-unique
+     across the session (same value from each peer is expected).
+  10. DER canonicality check: this is the regression test for the force=True
+      bug -- a naive `obj.dump() != encoded_data` compares asn1crypto's cached
+      original bytes against themselves and is a silent no-op. These tests
+      fail loudly if that regresses.
+  11. Cross-validation against the independently-authored kem-make.asn1
       schema, compiled with asn1tools, confirming both describe the same
       wire format for types that don't require open-type registration.
 
@@ -32,6 +37,9 @@ from kem_make import (
     KemPublicKey,
     KemCiphertext,
     KeyId,
+    AeadAlgorithmList,
+    AEAD_OIDS,
+    aead_name,
     SessionInitRequest,
     SessionInitResponse,
     SessionCompletionRequest,
@@ -74,6 +82,7 @@ def test_envelope_round_trip():
         "ct1": ct1,
         "pk_a_star": pk_a_star,
         "key_id_a": key_id_a,
+        "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm", "chacha20-poly1305"]),
     })
 
     msg = MakeMessage.build(cid, "session_init_request", req)
@@ -83,6 +92,9 @@ def test_envelope_round_trip():
     assert parsed.correlation_id == cid
     assert parsed["payload"].name == "session_init_request"
     assert parsed["payload"].chosen["ct1"]["ciphertext"].native == ct1["ciphertext"].native
+    assert parsed["payload"].chosen["acceptable_aeads"].native == [
+        AEAD_OIDS["aes256-gcm"], AEAD_OIDS["chacha20-poly1305"],
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +185,10 @@ def test_key_id_changes_if_algorithm_differs_but_key_bytes_same():
 def test_make_message_load_rejects_short_cid():
     pk = _pk()
     ct1 = _ct()
-    req = SessionInitRequest({"ct1": ct1, "pk_a_star": pk, "key_id_a": KeyId.build(pk)})
+    req = SessionInitRequest({
+        "ct1": ct1, "pk_a_star": pk, "key_id_a": KeyId.build(pk),
+        "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm"]),
+    })
 
     bad = MakeMessage({
         "version": 0,
@@ -249,41 +264,102 @@ def test_m_absent_is_shorter_on_wire():
 
 
 # ---------------------------------------------------------------------------
-# 8. Message: seq (per-direction, non-unique) + mandatory nonce + payload
+# 8. AEAD negotiation: acceptable_aeads (request) / chosen_aead (response)
+# ---------------------------------------------------------------------------
+
+def test_acceptable_aeads_round_trips_by_name():
+    lst = AeadAlgorithmList.build(["aes256-gcm", "chacha20-poly1305"])
+    parsed = AeadAlgorithmList.load(lst.dump())
+    assert parsed.native == [AEAD_OIDS["aes256-gcm"], AEAD_OIDS["chacha20-poly1305"]]
+
+
+def test_acceptable_aeads_round_trips_by_raw_oid():
+    lst = AeadAlgorithmList.build([AEAD_OIDS["aes128-gcm"]])
+    parsed = AeadAlgorithmList.load(lst.dump())
+    assert parsed.native == [AEAD_OIDS["aes128-gcm"]]
+
+
+def test_acceptable_aeads_rejects_empty_list():
+    with pytest.raises(ValueError):
+        AeadAlgorithmList.build([])
+
+
+def test_acceptable_aeads_allows_unrecognized_oid():
+    # Forward compatibility: the list is peer-advertised and may legitimately
+    # contain algorithms this implementation doesn't recognize yet. This
+    # must not raise.
+    unregistered_but_valid_oid = "1.3.6.1.4.1.99999.1"
+    lst = AeadAlgorithmList.build([unregistered_but_valid_oid])
+    parsed = AeadAlgorithmList.load(lst.dump())
+    assert parsed.native == [unregistered_but_valid_oid]
+    assert aead_name(unregistered_but_valid_oid) is None
+
+
+def test_session_init_response_chosen_aead_round_trips():
+    pk = _pk()
+    ct = _ct()
+    resp = SessionInitResponse({
+        "key_id_b": KeyId.build(pk),
+        "pk_b_star": pk,
+        "ct2": ct,
+        "ct3": ct,
+        "n_b": b"n" * 16,
+        "chosen_aead": AEAD_OIDS["aes256-gcm"],
+    })
+    parsed = SessionInitResponse.load(resp.dump())
+    assert parsed["chosen_aead"].native == AEAD_OIDS["aes256-gcm"]
+    assert aead_name(parsed["chosen_aead"].native) == "aes256-gcm"
+
+
+@pytest.mark.parametrize("name", ["aes128-gcm", "aes192-gcm", "aes256-gcm", "chacha20-poly1305"])
+def test_all_known_aead_oids_round_trip(name):
+    resp = SessionInitResponse({
+        "key_id_b": KeyId.build(_pk()),
+        "pk_b_star": _pk(),
+        "ct2": _ct(),
+        "ct3": _ct(),
+        "n_b": b"n" * 16,
+        "chosen_aead": AEAD_OIDS[name],
+    })
+    parsed = SessionInitResponse.load(resp.dump())
+    assert aead_name(parsed["chosen_aead"].native) == name
+
+
+# ---------------------------------------------------------------------------
+# 9. Message: seq (per-direction, non-unique on its own) + payload
 # ---------------------------------------------------------------------------
 
 def test_message_round_trip():
-    msg = Message({"seq": 1, "n": b"\x00" * 12, "m": b"payload"})
+    msg = Message({"seq": 1, "m": b"payload"})
     parsed = Message.load(msg.dump())
     assert parsed["seq"].native == 1
-    assert parsed["n"].native == b"\x00" * 12
     assert parsed["m"].native == b"payload"
-
-
-def test_message_requires_nonce():
-    # Nonce is mandatory precisely because seq is scoped per direction and
-    # is therefore not unique across the session on its own.
-    with pytest.raises(Exception):
-        Message({"seq": 1, "m": b"payload"}).dump()
 
 
 def test_message_requires_seq():
     with pytest.raises(Exception):
-        Message({"n": b"\x00" * 12, "m": b"payload"}).dump()
+        Message({"m": b"payload"}).dump()
 
 
 def test_message_requires_payload():
     with pytest.raises(Exception):
-        Message({"seq": 1, "n": b"\x00" * 12}).dump()
+        Message({"seq": 1}).dump()
+
+
+def test_message_has_no_nonce_field():
+    # Nonce was removed: uniqueness now comes from (per-direction session
+    # key, seq), not a per-message nonce. This test fails loudly if a
+    # nonce field is ever reintroduced without updating this decision.
+    assert [f[0] for f in Message._fields] == ["seq", "m"]
 
 
 def test_message_same_seq_different_direction_is_permitted_by_the_structure():
     # The Message type itself does not (and should not) enforce cross-
-    # direction uniqueness of seq -- that's the whole reason the nonce
-    # exists. Two Messages with identical seq but different nonces must
-    # both be valid, independently constructible values.
-    msg_from_alice = Message({"seq": 5, "n": b"\xaa" * 12, "m": b"from alice"})
-    msg_from_bob = Message({"seq": 5, "n": b"\xbb" * 12, "m": b"from bob"})
+    # direction uniqueness of seq -- each direction has its own derived
+    # session key, so identical seq values from each side are expected and
+    # safe, not a collision.
+    msg_from_alice = Message({"seq": 5, "m": b"from alice"})
+    msg_from_bob = Message({"seq": 5, "m": b"from bob"})
 
     assert msg_from_alice["seq"].native == msg_from_bob["seq"].native == 5
     assert msg_from_alice.dump() != msg_from_bob.dump()
@@ -291,7 +367,7 @@ def test_message_same_seq_different_direction_is_permitted_by_the_structure():
 
 @pytest.mark.parametrize("seq", [0, 1, 255, 4294967295])
 def test_message_seq_various_magnitudes(seq):
-    msg = Message({"seq": seq, "n": b"\x00" * 12, "m": b"x"})
+    msg = Message({"seq": seq, "m": b"x"})
     parsed = Message.load(msg.dump())
     assert parsed["seq"].native == seq
 
@@ -377,8 +453,7 @@ def test_schema_matches_python_classes_for_session_completion_response():
 
 def test_schema_matches_python_classes_for_message():
     """
-    Cross-checks the new Message type (seq, n, m) against the schema,
-    since it's the newest addition and hasn't been validated this way yet.
+    Cross-checks the Message type (seq, m -- no nonce) against the schema.
     """
     asn1tools = pytest.importorskip("asn1tools")
     import os
@@ -389,10 +464,34 @@ def test_schema_matches_python_classes_for_message():
 
     schema = asn1tools.compile_files([schema_path], codec="der")
 
-    msg = Message({"seq": 42, "n": b"\x01" * 12, "m": b"payload-bytes"})
-    tools_der = schema.encode("Message", {"seq": 42, "n": b"\x01" * 12, "m": b"payload-bytes"})
+    msg = Message({"seq": 42, "m": b"payload-bytes"})
+    tools_der = schema.encode("Message", {"seq": 42, "m": b"payload-bytes"})
 
     assert msg.dump() == tools_der
 
     decoded = schema.decode("Message", msg.dump())
-    assert decoded == {"seq": 42, "n": b"\x01" * 12, "m": b"payload-bytes"}
+    assert decoded == {"seq": 42, "m": b"payload-bytes"}
+
+
+def test_schema_matches_python_classes_for_acceptable_aeads():
+    """
+    Cross-checks AeadAlgorithmList (Python) against AcceptableAeadList
+    (schema) -- the newest addition, not yet validated this way.
+    """
+    asn1tools = pytest.importorskip("asn1tools")
+    import os
+
+    schema_path = os.path.join(os.path.dirname(__file__), "kem-make.asn1")
+    if not os.path.exists(schema_path):
+        pytest.skip("kem-make.asn1 not found alongside this test file")
+
+    schema = asn1tools.compile_files([schema_path], codec="der")
+
+    oids = [AEAD_OIDS["aes256-gcm"], AEAD_OIDS["chacha20-poly1305"]]
+    lst = AeadAlgorithmList.build(oids)
+    tools_der = schema.encode("AcceptableAeadList", oids)
+
+    assert lst.dump() == tools_der
+
+    decoded = schema.decode("AcceptableAeadList", lst.dump())
+    assert decoded == oids

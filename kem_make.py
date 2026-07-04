@@ -23,9 +23,24 @@ toolchain).
 Message sequence numbers (see Message): seq is scoped per direction (each
 peer maintains its own independent counter), so the same seq value can
 legitimately occur once from Alice and once from Bob within the same
-session. seq is therefore NOT a session-wide unique value on its own --
-the accompanying nonce "n" is what must be relied on for any use that needs
-actual uniqueness (e.g. deriving an AEAD nonce).
+session. This is safe because Alice's and Bob's session keys are
+independently derived (two directional keys out of the same HKDF that
+already produces the other session key material) -- so the pair
+(direction key, seq) is what must be unique, not seq on its own. seq is
+NOT a session-wide unique value by itself, and must not be treated as one
+by any code outside this module (e.g. a replay cache keyed only by seq,
+shared across both directions, would be wrong).
+
+AEAD negotiation: SessionInitRequest advertises the initiator's acceptable
+AEAD algorithms as a list of OBJECT IDENTIFIERs (not full
+AlgorithmIdentifier structures -- this is capability negotiation, not the
+AEAD's own per-message parameters). SessionInitResponse names the single
+chosen algorithm the same way. Note that some AEAD OIDs (e.g. the AES-GCM
+family per RFC 5084) require a present `parameters` field with actual
+nonce/ICV-length data when used as a real AlgorithmIdentifier for
+encryption -- that requirement does not apply here, since these fields
+only carry the bare OID for negotiation purposes, analogous to how RFC
+8103 defines SMIMECapability announcement (OID only, parameters omitted).
 """
 
 from __future__ import annotations
@@ -33,7 +48,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-from asn1crypto.core import Sequence, OctetString, Integer, Choice
+from asn1crypto.core import Sequence, SequenceOf, OctetString, Integer, Choice, ObjectIdentifier
 from asn1crypto.algos import AlgorithmIdentifier, DigestAlgorithm
 
 
@@ -53,6 +68,28 @@ MLKEM_PK_LEN = {512: 800, 768: 1184, 1024: 1568}
 MLKEM_CT_LEN = {512: 768, 768: 1088, 1024: 1568}
 
 CID_LEN = 16  # 128-bit binary UUID
+
+# AEAD algorithm OIDs used for negotiation only (bare OID, no parameters).
+# AES-GCM family: RFC 5084. ChaCha20-Poly1305: RFC 8103.
+AEAD_OIDS = {
+    "aes128-gcm": "2.16.840.1.101.3.4.1.6",
+    "aes192-gcm": "2.16.840.1.101.3.4.1.26",
+    "aes256-gcm": "2.16.840.1.101.3.4.1.46",
+    "chacha20-poly1305": "1.2.840.113549.1.9.16.3.18",
+}
+_AEAD_OID_TO_NAME = {v: k for k, v in AEAD_OIDS.items()}
+
+
+def aead_name(oid: str) -> "str | None":
+    """Friendly name for a known AEAD OID, or None if unrecognized.
+
+    Deliberately does not raise on an unrecognized OID: the acceptable-AEAD
+    list is peer-supplied and may legitimately include algorithms this
+    implementation doesn't know about yet (forward compatibility). Callers
+    that need to reject unknown algorithms should do so explicitly at the
+    point where they select/validate the chosen algorithm, not here.
+    """
+    return _AEAD_OID_TO_NAME.get(oid)
 
 
 class UnknownKemAlgorithm(ValueError):
@@ -196,6 +233,23 @@ class KeyId(Sequence):
 
 
 # ---------------------------------------------------------------------------
+# AEAD negotiation: a list of acceptable algorithms (request) or a single
+# chosen one (response). Bare OIDs -- see module docstring for why.
+# ---------------------------------------------------------------------------
+
+class AeadAlgorithmList(SequenceOf):
+    _child_spec = ObjectIdentifier
+
+    @classmethod
+    def build(cls, oids) -> "AeadAlgorithmList":
+        """oids: iterable of dotted-string OIDs or AEAD_OIDS keys."""
+        resolved = [AEAD_OIDS.get(o, o) for o in oids]
+        if not resolved:
+            raise ValueError("acceptable AEAD list must contain at least one OID")
+        return cls([ObjectIdentifier(o) for o in resolved])
+
+
+# ---------------------------------------------------------------------------
 # MAKE protocol PDUs
 # ---------------------------------------------------------------------------
 
@@ -204,6 +258,7 @@ class SessionInitRequest(Sequence):
         ("ct1", KemCiphertext),
         ("pk_a_star", KemPublicKey),
         ("key_id_a", KeyId),
+        ("acceptable_aeads", AeadAlgorithmList),
     ]
 
 
@@ -214,6 +269,7 @@ class SessionInitResponse(Sequence):
         ("ct2", KemCiphertext),
         ("ct3", KemCiphertext),
         ("n_b", OctetString),
+        ("chosen_aead", ObjectIdentifier),
     ]
 
 
@@ -236,7 +292,6 @@ class SessionCompletionResponse(Sequence):
 class Message(Sequence):
     _fields = [
         ("seq", Integer),
-        ("n", OctetString),
         ("m", OctetString),
     ]
 
@@ -306,6 +361,7 @@ if __name__ == "__main__":
         "ct1": ct1,
         "pk_a_star": pk_a_star,
         "key_id_a": key_id_a,
+        "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm", "chacha20-poly1305"]),
     })
 
     msg = MakeMessage.build(cid, "session_init_request", req)

@@ -10,15 +10,35 @@ Feature: KEM-MAKE handshake messages
     And a valid ML-KEM-768 KemPublicKey "pk"
     And a KeyId "kid" built from "pk"
 
-  Scenario: A session-init-request carries a ciphertext, ephemeral public key, and key id
-    When I build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid"
+  Scenario: A session-init-request carries a ciphertext, ephemeral public key, key id, and acceptable AEAD list
+    When I build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["aes256-gcm", "chacha20-poly1305"]
+    Then the SessionInitRequest round-trips through DER encoding unchanged
+    And its acceptable_aeads field contains "aes256-gcm" and "chacha20-poly1305", in that order
+
+  Scenario: A session-init-request cannot omit the acceptable AEAD list
+    When I attempt to build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid" and no acceptable_aeads
+    Then encoding the SessionInitRequest fails
+
+  Scenario: The acceptable AEAD list must contain at least one algorithm
+    When I attempt to build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid", acceptable_aeads=[]
+    Then building the acceptable AEAD list fails
+
+  Scenario: The acceptable AEAD list may include an algorithm this implementation doesn't recognize
+    When I build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["1.3.6.1.4.1.99999.1"]
     Then the SessionInitRequest round-trips through DER encoding unchanged
 
-  Scenario: A session-init-response carries a key id, ephemeral public key, two ciphertexts, and a nonce
+  Scenario: A session-init-response carries a key id, ephemeral public key, two ciphertexts, a nonce, and the chosen AEAD
     Given a second valid ML-KEM-768 KemCiphertext "ct2"
     And a nonce "nB" of 16 bytes
-    When I build a SessionInitResponse with key_id_b="kid", pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB"
+    When I build a SessionInitResponse with key_id_b="kid", pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB", chosen_aead="aes256-gcm"
     Then the SessionInitResponse round-trips through DER encoding unchanged
+    And its chosen_aead field is "aes256-gcm"
+
+  Scenario: A session-init-response cannot omit the chosen AEAD
+    Given a second valid ML-KEM-768 KemCiphertext "ct2"
+    And a nonce "nB" of 16 bytes
+    When I attempt to build a SessionInitResponse with key_id_b="kid", pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB" and no chosen_aead
+    Then encoding the SessionInitResponse fails
 
   Scenario: A session-completion-request without early data omits the "m" field from the wire
     Given a nonce "nA" of 16 bytes

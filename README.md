@@ -37,11 +37,11 @@ MakeMessage
 ├── version   (INTEGER, DEFAULT 0, omitted from DER when default)
 ├── cid       (OCTET STRING, 128-bit binary UUID)
 └── payload   (CHOICE, tagged [0]-[4])
-    ├── [0] SessionInitRequest           { ct1, pkAStar, keyIdA }
-    ├── [1] SessionInitResponse          { keyIdB, pkBStar, ct2, ct3, nB }
+    ├── [0] SessionInitRequest           { ct1, pkAStar, keyIdA, acceptableAeads }
+    ├── [1] SessionInitResponse          { keyIdB, pkBStar, ct2, ct3, nB, chosenAead }
     ├── [2] SessionCompletionRequest     { cM, ct4, nA, m? }
     ├── [3] SessionCompletionResponse    { hM, m? }
-    └── [4] Message                      { seq, n, m }
+    └── [4] Message                      { seq, m }
 ```
 
 `m` on `SessionCompletionRequest`/`SessionCompletionResponse` is
@@ -50,12 +50,28 @@ optimization is used, otherwise absent from the wire entirely (not an
 empty string).
 
 `Message` is the post-handshake application-data PDU: `seq` is a
-per-direction sequence number, `n` is a mandatory nonce, `m` is the opaque
-payload. **`seq` is scoped per direction** — each peer keeps its own
-independent counter, so the same `seq` value can legitimately occur once
-from each peer within a session. `seq` is therefore *not* unique across
-the whole session on its own; `n` is what must be relied on wherever
-genuine uniqueness is required (e.g. deriving an AEAD nonce).
+per-direction sequence number, `m` is the opaque payload. **`seq` is
+scoped per direction** — each peer keeps its own independent counter, so
+the same `seq` value can legitimately occur once from each peer within a
+session. This is safe (not a collision risk) because each direction has
+its own independently derived session key, out of the same HKDF that
+produces the other session key material — the pair `(direction key, seq)`
+is what must be unique, not `seq` alone. There is no per-message nonce
+field on `Message`.
+
+`acceptableAeads` (`SessionInitRequest`) and `chosenAead`
+(`SessionInitResponse`) negotiate the AEAD algorithm: a list of bare
+`OBJECT IDENTIFIER`s the initiator will accept, and the single OID the
+responder picked. These are bare OIDs, not full `AlgorithmIdentifier`
+structures — this is capability negotiation, not the AEAD's own
+per-message parameters (nonce, ICV length, etc.), which are handled
+elsewhere. `AEAD_OIDS` in `kem_make.py` has the currently known algorithms
+(AES-128/192/256-GCM per RFC 5084, ChaCha20-Poly1305 per RFC 8103).
+`acceptableAeads` deliberately accepts unrecognized OIDs on load — it's
+peer-advertised and forward compatibility matters there — while
+`chosenAead` should be checked against the OIDs actually offered at the
+protocol layer, since the ASN.1 structure alone can't cross-reference the
+two separate PDUs.
 
 ## Quick usage
 
@@ -63,6 +79,7 @@ genuine uniqueness is required (e.g. deriving an AEAD nonce).
 import uuid
 from kem_make import (
     MakeMessage, SessionInitRequest, KemPublicKey, KemCiphertext, KeyId,
+    AeadAlgorithmList,
 )
 
 cid = uuid.uuid4()
@@ -74,6 +91,7 @@ req = SessionInitRequest({
     "ct1": ct1,
     "pk_a_star": pk_a_star,
     "key_id_a": key_id_a,
+    "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm", "chacha20-poly1305"]),
 })
 
 msg = MakeMessage.build(cid, "session_init_request", req)
@@ -112,11 +130,28 @@ assert parsed["payload"].name == "session_init_request"
 - **`version` uses DER's DEFAULT-omission rule**, not `OPTIONAL`. A v1
   message (`version=0`) omits the field entirely on the wire; `.native`
   still reports `0` when absent.
-- **`Message.seq` is per-direction, not session-wide.** Don't use `seq`
-  alone anywhere that needs a value unique across the whole session (e.g.
-  nonce derivation, replay caches keyed only by seq) — use `n`, or the
-  pair `(direction, seq)`, instead. This is also why `n` is mandatory
-  rather than optional on `Message`.
+- **`Message.seq` is per-direction, not session-wide, and there is no
+  per-message nonce.** Uniqueness comes from `(direction session key,
+  seq)`, since each direction's key is independently derived via HKDF.
+  Don't use `seq` alone anywhere that needs a session-wide-unique value
+  (e.g. a replay cache shared across both directions) — key it by
+  direction as well.
+- **AEAD negotiation uses bare OIDs, not `AlgorithmIdentifier`s.**
+  `acceptableAeads`/`chosenAead` only need to name an algorithm for
+  negotiation purposes; the actual per-message AEAD parameters (nonce,
+  ICV length) live elsewhere, not in these fields. Note that some of these
+  same OIDs (the AES-GCM family, per RFC 5084) require a *present*
+  `parameters` field when used as a real `AlgorithmIdentifier` for
+  encryption — that rule doesn't apply here since these fields aren't
+  full `AlgorithmIdentifier`s at all, just the bare OID.
+- **`acceptableAeads` tolerates unrecognized OIDs; `chosenAead` should be
+  checked at the protocol layer.** The request's list is peer-advertised
+  and may include algorithms this implementation doesn't know about yet
+  (forward compatibility), so `AeadAlgorithmList` doesn't reject unknown
+  OIDs on load. The response's single chosen algorithm should be validated
+  against what was actually offered — but that's a cross-PDU check the
+  ASN.1 structure alone can't perform, since the request and response are
+  separate objects; it belongs in the protocol implementation, not here.
 
 ## Keeping the schema in sync
 
@@ -130,10 +165,11 @@ file exists for readability and for interop with other ASN.1 toolchains.
 confirms it produces byte-identical DER to `kem_make.py` in both
 directions, for the types that don't require `ANY DEFINED BY` open-type
 registration to encode cleanly through asn1tools
-(`SessionCompletionResponse` and `Message`). `AlgorithmIdentifier`'s open-type
-field is standard PKIX style and compiles fine, but fully exercising it
-through asn1tools' encoder would need that registration set up separately
-— it hasn't been, since it wasn't needed to validate what's changed so far.
+(`SessionCompletionResponse`, `Message`, and `AcceptableAeadList`).
+`AlgorithmIdentifier`'s open-type field is standard PKIX style and
+compiles fine, but fully exercising it through asn1tools' encoder would
+need that registration set up separately — it hasn't been, since it
+wasn't needed to validate what's changed so far.
 
 ## Requirements pinning
 
