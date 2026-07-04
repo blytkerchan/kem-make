@@ -215,12 +215,21 @@ class SessionCompletionRequest(Sequence):
         ("c_m", OctetString),
         ("ct4", KemCiphertext),
         ("n_a", OctetString),
+        ("m", OctetString, {"implicit": 0, "optional": True}),
     ]
 
 
-class Ack(Sequence):
+class SessionCompletionResponse(Sequence):
     _fields = [
         ("h_m", OctetString),
+        ("m", OctetString, {"implicit": 0, "optional": True}),
+    ]
+
+
+class Message(Sequence):
+    _fields = [
+        ("seq", Integer),
+        ("m", OctetString),
     ]
 
 
@@ -229,7 +238,8 @@ class MakePayload(Choice):
         ("session_init_request", SessionInitRequest, {"implicit": 0}),
         ("session_init_response", SessionInitResponse, {"implicit": 1}),
         ("session_completion_request", SessionCompletionRequest, {"implicit": 2}),
-        ("ack", Ack, {"implicit": 3}),
+        ("session_completion_response", SessionCompletionResponse, {"implicit": 3}),
+        ("message", Message, {"implicit": 4}),
     ]
 
 
