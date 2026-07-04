@@ -1,0 +1,97 @@
+SIT-MAKE-2026 DEFINITIONS IMPLICIT TAGS ::=
+BEGIN
+
+-- ===========================================================================
+-- SIT MAKE protocol message syntax.
+--
+-- Encoding: DER only. BER (indefinite lengths, non-minimal length forms,
+-- non-canonical constructed/primitive forms) is not permitted on the wire.
+-- ===========================================================================
+
+-- Standard PKIX AlgorithmIdentifier (RFC 5280), reused here for both KEM
+-- algorithms and digest algorithms.
+AlgorithmIdentifier ::= SEQUENCE {
+    algorithm   OBJECT IDENTIFIER,
+    parameters  ANY DEFINED BY algorithm OPTIONAL
+}
+
+-- ML-KEM OIDs (RFC 9935). parameters MUST be
+-- absent for all three; not NULL.
+id-alg-ml-kem-512  OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 1 }
+id-alg-ml-kem-768  OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 2 }
+id-alg-ml-kem-1024 OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 3 }
+
+KemPublicKey ::= SEQUENCE {
+    algorithm   AlgorithmIdentifier,   -- one of id-alg-ml-kem-{512,768,1024}
+    publicKey   OCTET STRING           -- length fixed by algorithm (FIPS 203)
+}
+
+KemCiphertext ::= SEQUENCE {
+    algorithm   AlgorithmIdentifier,   -- one of id-alg-ml-kem-{512,768,1024}
+    ciphertext  OCTET STRING           -- length fixed by algorithm (FIPS 203)
+}
+
+-- Key identifier: digest algorithm + hash of the DER encoding of the whole
+-- KemPublicKey SEQUENCE (algorithm + key bytes), never the raw key octets
+-- alone. hashAlgorithm identifies how keyHash was computed; it says nothing
+-- about the KEM algorithm of the underlying key.
+KeyId ::= SEQUENCE {
+    hashAlgorithm  AlgorithmIdentifier,
+    keyHash        OCTET STRING
+}
+
+-- === section ===
+-- MAKE protocol PDUs
+-- === section ===
+
+SessionInitRequest ::= SEQUENCE {
+    ct1       KemCiphertext,
+    pkAStar   KemPublicKey,
+    keyIdA    KeyId
+}
+
+SessionInitResponse ::= SEQUENCE {
+    keyIdB    KeyId,
+    pkBStar   KemPublicKey,
+    ct2       KemCiphertext,
+    ct3       KemCiphertext,
+    nB        OCTET STRING
+}
+
+SessionCompletionRequest ::= SEQUENCE {
+    cM          OCTET STRING,
+    ct4         KemCiphertext,
+    nA          OCTET STRING,
+    m       [0] OCTET STRING OPTIONAL
+}
+
+SessionCompletionResponse ::= SEQUENCE {
+    hM          OCTET STRING,
+    m       [0] OCTET STRING OPTIONAL
+}
+
+Message ::= SEQUENCE {
+    seq  INTEGER,
+    m    OCTET STRING
+}
+
+MakePayload ::= CHOICE {
+    sessionInitRequest        [0] SessionInitRequest,
+    sessionInitResponse       [1] SessionInitResponse,
+    sessionCompletionRequest  [2] SessionCompletionRequest,
+    sessionCompletionResponse [3] SessionCompletionResponse,
+    message                   [4] Message
+}
+
+-- Versioned session envelope. version defaults to 0 (protocol v1) and, per
+-- DER, MUST be omitted from the encoding when equal to its default value.
+-- cid is a 128-bit binary UUID (RFC 4122), fixed length, no ASN.1-level
+-- length constraint expressed here beyond OCTET STRING; length is
+-- enforced by the implementation, not the schema.
+MakeMessage ::= SEQUENCE {
+    version  INTEGER DEFAULT 0,
+    cid      OCTET STRING (SIZE(16)),  -- 128-bit UUID (RFC 4122)
+    payload  MakePayload
+}
+
+END
