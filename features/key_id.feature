@@ -1,3 +1,4 @@
+# Bottom sub-layer for KEM-MAKE
 Feature: Key identifier computation
   As an implementer of KEM-MAKE
   I want a KeyId to be a hash of the whole KemPublicKey structure, not just
