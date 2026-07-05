@@ -1,13 +1,20 @@
-FROM erlang:27-alpine
+FROM debian:12-slim
 
-# Install bash for wrapper scripts if necessary
-RUN apk add --no-cache bash
+# Avoid prompts during apt installations
+ENV DEBIAN_FRONTEND=noninteractive
 
+# Install Heimdal compiler tooling alongside fundamental C build toolchains
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    heimdal-multidev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set local tracking execution paths
 WORKDIR /workspace
 
-# Copy the escript tool to a global binary directory
-COPY validate_and_encode.escript /usr/local/bin/validate_and_encode
-RUN chmod +x /usr/local/bin/validate_and_encode
+# Copy and configure the automation orchestrator script
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
-# Set execution entrypoint
-ENTRYPOINT ["/usr/local/bin/validate_and_encode"]
+# Set the operational interface
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
