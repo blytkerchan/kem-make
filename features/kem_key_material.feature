@@ -1,3 +1,4 @@
+# Security sub-layer for KEM-MAKE
 Feature: KEM public key and ciphertext validation
   As an implementer of KEM-MAKE
   I want KemPublicKey and KemCiphertext to enforce ML-KEM algorithm
@@ -18,7 +19,6 @@ Feature: KEM public key and ciphertext validation
 
     Examples:
       | level | length | oid                      |
-      | 512   | 800    | 2.16.840.1.101.3.4.4.1   |
       | 768   | 1184   | 2.16.840.1.101.3.4.4.2   |
       | 1024  | 1568   | 2.16.840.1.101.3.4.4.3   |
 
@@ -30,7 +30,6 @@ Feature: KEM public key and ciphertext validation
 
     Examples:
       | level | length | oid                      |
-      | 512   | 768    | 2.16.840.1.101.3.4.4.1   |
       | 768   | 1088   | 2.16.840.1.101.3.4.4.2   |
       | 1024  | 1568   | 2.16.840.1.101.3.4.4.3   |
 

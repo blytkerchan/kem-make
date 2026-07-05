@@ -1,3 +1,4 @@
+# Bottom sub-layer for KEM-MAKE
 Feature: Session message envelope
   As an implementer of KEM-MAKE
   I want every PDU wrapped in a versioned envelope carrying a correlation id
