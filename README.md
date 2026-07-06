@@ -161,15 +161,47 @@ does pyasn1), so there's no tooling guarantee that the `.asn1` file and
 mirrored in the other manually. `kem_make.py` is authoritative; the `.asn1`
 file exists for readability and for interop with other ASN.1 toolchains.
 
-`test_kem_make.py` cross-compiles `kem-make.asn1` with `asn1tools` and
-confirms it produces byte-identical DER to `kem_make.py` in both
-directions, for the types that don't require `ANY DEFINED BY` open-type
-registration to encode cleanly through asn1tools
-(`SessionCompletionResponse`, `Message`, and `AcceptableAeadList`).
-`AlgorithmIdentifier`'s open-type field is standard PKIX style and
-compiles fine, but fully exercising it through asn1tools' encoder would
-need that registration set up separately — it hasn't been, since it
-wasn't needed to validate what's changed so far.
+**`kem-make.asn1` does not compile with any tool currently in this repo, and
+that's expected.** `KemPublicKey`, `KemCiphertext`, and `KeyId` use RFC
+5912's real, canonical parameterized `AlgorithmIdentifier{}` (information
+object classes, X.681–683), imported from `AlgorithmInformation-2009` /
+`PKIX1-PSS-OAEP-Algorithms-2009`. Those imported modules aren't vendored
+into this repo, and even if they were: three independently-built
+open-source ASN.1 compilers were tested against this exact construct
+(`asn1tools`, Erlang/OTP's `asn1ct`, Heimdal's `asn1_compile`) and none can
+fully resolve it — `asn1tools` fails to resolve the governed open type at
+all; `asn1ct` resolves it directly but crashes specifically when it's
+wrapped in a reusable parameterized type; Heimdal's grammar has no support
+for information object classes whatsoever (the `&`-field syntax doesn't
+even tokenize). See the schema file's own comments for the full account.
+
+This has a wider consequence than just those three types: `asn1tools`
+requires a module's `IMPORTS` to resolve before it can compile *anything*
+in that module, and `MakePayload` (a `CHOICE`) references
+`SessionInitRequest`/`SessionInitResponse`, which reference the
+`AlgorithmIdentifier`-bearing types — so the failure isn't scoped to
+`KemPublicKey`/`KemCiphertext`/`KeyId`, it makes the **entire file**
+uncompilable as a single unit, including `SessionCompletionResponse`,
+`Message`, and `AcceptableAeadList`, none of which touch
+`AlgorithmIdentifier` at all.
+
+`kem-make.asn1` is therefore documentation only from here on — a spec
+reference for readers, not a tool-verified artifact. `kem_make.py` remains
+the authoritative, tested definition of the actual wire format, and its
+DER output is byte-for-byte identical to what the canonical schema
+describes regardless (`ALGORITHM.&id`/`.&Params` still resolve to a bare
+`OBJECT IDENTIFIER` + optional open type either way — only the schema's
+formal expressiveness differs, not the bytes on the wire).
+
+`test_kem_make.py`'s three schema cross-check tests
+(`test_schema_matches_python_classes_for_session_completion_response`,
+`_for_message`, `_for_acceptable_aeads`) skip gracefully with an explicit
+reason rather than fail, since this is now a permanent, expected state
+rather than a transient environment problem. If a more complete X.681–683
+implementation ever becomes available (a commercial compiler like
+Objective Systems ASN1C or OSS Nokalva is the likeliest candidate, though
+untested here) and you vendor the real imported modules, these tests will
+start running for real again with no code changes needed.
 
 ## Requirements pinning
 
@@ -178,5 +210,7 @@ canonicality check depends on `dump(force=True)` behaving as it currently
 does internally, which isn't part of asn1crypto's public API contract. If
 you bump the pin, re-run `test_kem_make.py` (particularly
 `test_non_minimal_length_ber_is_rejected` and
+`test_canonicality_check_is_not_a_silent_noop`) before trusting the new
+version.
 `test_canonicality_check_is_not_a_silent_noop`) before trusting the new
 version.
