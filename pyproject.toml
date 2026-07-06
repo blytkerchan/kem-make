@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kem-make"
+version = "0.1.0"
+description = "DER-encoded message structures for the KEM-MAKE key-establishment protocol"
+requires-python = ">=3.10"
+dependencies = [
+    # DER canonicality check in bottom.py depends on dump(force=True)
+    # behaving as it currently does internally (not part of asn1crypto's
+    # public API contract) -- re-run test_bottom.py before bumping.
+    "asn1crypto==1.5.1",
+
+    # ==49.0.0 (not >=) because this is the release where the official
+    # PyPI wheels bundle OpenSSL>=3.5, which is what makes
+    # cryptography.hazmat.primitives.asymmetric.mlkem (ML-KEM) available
+    # without a custom AWS-LC/BoringSSL build. This pin is necessary but
+    # NOT sufficient: it doesn't guarantee the installed wheel on every
+    # platform actually has a PQC-capable backend (e.g. an unusual
+    # platform without a prebuilt wheel, forcing a source build against
+    # an older system OpenSSL). Run crypto_backend.py's check_backend()
+    # at application startup to verify the backend is actually
+    # functional, not just importable.
+    "cryptography==49.0.0",
+]
+
+[project.optional-dependencies]
+# Not required by bottom.py at runtime. asn1tools is used only to
+# independently cross-validate kem-make.asn1 against the hand-coded
+# asn1crypto classes (compiling the schema and comparing encoded bytes,
+# where that's still possible -- see kem-make.asn1's and README.md's notes
+# on the canonical AlgorithmIdentifier{} construct). pytest runs the test
+# suite; behave runs features/.
+dev = [
+    "asn1tools==0.167.0",
+    "pytest==9.1.1",
+    "behave==1.3.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
