@@ -8,28 +8,6 @@ BEGIN
 -- non-canonical constructed/primitive forms) is not permitted on the wire.
 -- ===========================================================================
 
--- ===========================================================================
--- NOTE ON VERIFICATION: everything from here down to the closing marker
--- below uses the modern, parameterized AlgorithmIdentifier{} from RFC
--- 5912's AlgorithmInformation-2009, which relies on X.681-683 information
--- object classes and table constraints. This is genuinely canonical PKIX
--- syntax; but as of this writing, no open-source ASN.1 compiler we
--- tested (asn1tools, Erlang/OTP's asn1ct, Heimdal's asn1_compile) can
--- fully resolve it: asn1tools fails to resolve the governed open type at
--- all; asn1ct resolves it directly but crashes specifically when it's
--- wrapped in a reusable parameterized type; Heimdal's grammar has no
--- support for information object classes whatsoever (the '&' field syntax
--- doesn't even tokenize). This section is therefore DOCUMENTATION ONLY;
--- it will not compile with any tool we have access to, and is not
--- cross-checked against kem_make.py the way the rest of this file is.
--- kem_make.py's actual wire format uses the plain SEQUENCE-style
--- AlgorithmIdentifier from RFC 5280 (see KemPublicKey/KemCiphertext/KeyId
--- in kem_make.py); byte-for-byte identical on the wire to what this
--- section describes, since ALGORITHM.&id/.&Params still resolve to a
--- bare OBJECT IDENTIFIER + OPTIONAL open type either way. Only the
--- schema-level expressiveness differs, not the DER on the wire.
--- ===========================================================================
-
 IMPORTS
     AlgorithmIdentifier{}, ALGORITHM, DIGEST-ALGORITHM
     FROM AlgorithmInformation-2009
@@ -47,11 +25,11 @@ IMPORTS
 -- "PARAMS TYPE NULL ARE absent". This specific form (an open type with no
 -- associated type for some objects in the set) is the exact construct
 -- disputed by RFC 5912 errata 4145, which argues it isn't well-formed
--- ASN.1; ten years unresolved as of this writing. Written this way
--- anyway because it's what ML-KEM's actual requirement is: "PARAMS TYPE
--- NULL ARE absent" would be internally consistent ASN.1 but would
--- misdescribe the wire format (implying a NULL type is merely never
--- chosen, rather than that no type applies at all).
+-- ASN.1. Written this way anyway because it's what ML-KEM's actual
+-- requirement is: "PARAMS TYPE NULL ARE absent" would be internally
+-- consistent ASN.1 but would misdescribe the wire format (implying a
+-- NULL type is merely never chosen, rather than that no type applies at
+-- all).
 id-alg-ml-kem-512  OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 1 }
 id-alg-ml-kem-768  OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 2 }
 id-alg-ml-kem-1024 OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 3 }
@@ -104,12 +82,6 @@ KeyId ::= SEQUENCE {
     hashAlgorithm  AlgorithmIdentifier{DIGEST-ALGORITHM, {KemMakeHashAlgorithms}},
     keyHash        OCTET STRING
 }
-
--- ===========================================================================
--- END NOTE ON VERIFICATION; everything below this point is ordinary
--- SEQUENCE/CHOICE syntax, fully compiled and cross-checked against
--- kem_make.py exactly as described elsewhere in this file and in README.md.
--- ===========================================================================
 
 -- === section ===
 -- MAKE protocol PDUs
