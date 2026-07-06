@@ -256,6 +256,7 @@ class AeadAlgorithmList(SequenceOf):
 class SessionInitRequest(Sequence):
     _fields = [
         ("ct1", KemCiphertext),
+        ("key_id_b", KeyId),
         ("pk_a_star", KemPublicKey),
         ("key_id_a", KeyId),
         ("acceptable_aeads", AeadAlgorithmList),
@@ -353,12 +354,26 @@ class MakeMessage(Sequence):
 if __name__ == "__main__":
     cid = uuid.uuid4()
 
+    # Alice's ephemeral key for this session.
     pk_a_star = KemPublicKey.build(b"\x00" * MLKEM_PK_LEN[768], level=768)
+
+    # Alice's own static public key -- key_id_a is computed from THIS, not
+    # from pk_a_star, so Bob can look her up by her registered identity
+    # rather than by a freshly generated, never-registered ephemeral key.
+    pk_a_static = KemPublicKey.build(b"\x22" * MLKEM_PK_LEN[768], level=768)
+    key_id_a = KeyId.build(pk_a_static)
+
+    # Bob's static public key -- ct1 is encapsulated against this key.
+    # key_id_b identifies which of Bob's keys it was, so Bob can pick the
+    # matching private key directly instead of trying every one he holds.
+    pk_b_static = KemPublicKey.build(b"\x33" * MLKEM_PK_LEN[768], level=768)
+    key_id_b = KeyId.build(pk_b_static)
+
     ct1 = KemCiphertext.build(b"\x11" * MLKEM_CT_LEN[768], level=768)
-    key_id_a = KeyId.build(pk_a_star)
 
     req = SessionInitRequest({
         "ct1": ct1,
+        "key_id_b": key_id_b,
         "pk_a_star": pk_a_star,
         "key_id_a": key_id_a,
         "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm", "chacha20-poly1305"]),

@@ -103,6 +103,7 @@ AcceptableAeadList ::= SEQUENCE OF OBJECT IDENTIFIER
 
 SessionInitRequest ::= SEQUENCE {
     ct1               KemCiphertext,
+    keyIdB            KeyId,           -- identifies the recipient key ct1 was encapsulated against
     pkAStar           KemPublicKey,
     keyIdA            KeyId,
     acceptableAeads   AcceptableAeadList

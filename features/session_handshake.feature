@@ -10,22 +10,35 @@ Feature: KEM-MAKE handshake messages
     Given a valid ML-KEM-768 KemCiphertext "ct"
     And a valid ML-KEM-768 KemPublicKey "pk"
     And a KeyId "kid" built from "pk"
+    And a second valid ML-KEM-768 KemPublicKey "pk_b"
+    And a KeyId "kid_b" built from "pk_b"
 
-  Scenario: A session-init-request carries a ciphertext, ephemeral public key, key id, and acceptable AEAD list
-    When I build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["aes256-gcm", "chacha20-poly1305"]
+  Scenario: A session-init-request carries a ciphertext, the recipient's key id, ephemeral public key, sender's key id, and acceptable AEAD list
+    When I build a SessionInitRequest with ct1="ct", key_id_b="kid_b", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["aes256-gcm", "chacha20-poly1305"]
     Then the SessionInitRequest round-trips through DER encoding unchanged
     And its acceptable_aeads field contains "aes256-gcm" and "chacha20-poly1305", in that order
 
+  Scenario: key_id_b identifies the recipient key the ciphertext was encapsulated against
+    Given a third valid ML-KEM-768 KemPublicKey "pk_b_other"
+    And a KeyId "kid_b_other" built from "pk_b_other"
+    When I build a SessionInitRequest with ct1="ct", key_id_b="kid_b", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["aes256-gcm"]
+    Then the SessionInitRequest's key_id_b matches "kid_b"
+    And the SessionInitRequest's key_id_b does not match "kid_b_other"
+
+  Scenario: A session-init-request cannot omit the recipient's key id
+    When I attempt to build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["aes256-gcm"] and no key_id_b
+    Then encoding the SessionInitRequest fails
+
   Scenario: A session-init-request cannot omit the acceptable AEAD list
-    When I attempt to build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid" and no acceptable_aeads
+    When I attempt to build a SessionInitRequest with ct1="ct", key_id_b="kid_b", pk_a_star="pk", key_id_a="kid" and no acceptable_aeads
     Then encoding the SessionInitRequest fails
 
   Scenario: The acceptable AEAD list must contain at least one algorithm
-    When I attempt to build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid", acceptable_aeads=[]
+    When I attempt to build a SessionInitRequest with ct1="ct", key_id_b="kid_b", pk_a_star="pk", key_id_a="kid", acceptable_aeads=[]
     Then building the acceptable AEAD list fails
 
   Scenario: The acceptable AEAD list may include an algorithm this implementation doesn't recognize
-    When I build a SessionInitRequest with ct1="ct", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["1.3.6.1.4.1.99999.1"]
+    When I build a SessionInitRequest with ct1="ct", key_id_b="kid_b", pk_a_star="pk", key_id_a="kid", acceptable_aeads=["1.3.6.1.4.1.99999.1"]
     Then the SessionInitRequest round-trips through DER encoding unchanged
 
   Scenario: A session-init-response carries a key id, ephemeral public key, two ciphertexts, a nonce, and the chosen AEAD

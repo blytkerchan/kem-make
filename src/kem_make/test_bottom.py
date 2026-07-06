@@ -75,11 +75,15 @@ def _ct(level=768, fill=b"\x11"):
 def test_envelope_round_trip():
     cid = uuid.uuid4()
     pk_a_star = _pk()
+    pk_a_static = _pk(fill=b"\x22")
+    pk_b_static = _pk(fill=b"\x33")
     ct1 = _ct()
-    key_id_a = KeyId.build(pk_a_star)
+    key_id_a = KeyId.build(pk_a_static)
+    key_id_b = KeyId.build(pk_b_static)
 
     req = SessionInitRequest({
         "ct1": ct1,
+        "key_id_b": key_id_b,
         "pk_a_star": pk_a_star,
         "key_id_a": key_id_a,
         "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm", "chacha20-poly1305"]),
@@ -92,6 +96,7 @@ def test_envelope_round_trip():
     assert parsed.correlation_id == cid
     assert parsed["payload"].name == "session_init_request"
     assert parsed["payload"].chosen["ct1"]["ciphertext"].native == ct1["ciphertext"].native
+    assert parsed["payload"].chosen["key_id_b"]["key_hash"].native == key_id_b["key_hash"].native
     assert parsed["payload"].chosen["acceptable_aeads"].native == [
         AEAD_OIDS["aes256-gcm"], AEAD_OIDS["chacha20-poly1305"],
     ]
@@ -186,7 +191,7 @@ def test_make_message_load_rejects_short_cid():
     pk = _pk()
     ct1 = _ct()
     req = SessionInitRequest({
-        "ct1": ct1, "pk_a_star": pk, "key_id_a": KeyId.build(pk),
+        "ct1": ct1, "key_id_b": KeyId.build(pk), "pk_a_star": pk, "key_id_a": KeyId.build(pk),
         "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm"]),
     })
 
@@ -207,6 +212,30 @@ def test_make_message_build_rejects_short_cid_via_manual_construction():
             "cid": b"\x00" * 15,
             "payload": ("session_completion_response", SessionCompletionResponse({"h_m": b"x" * 32})),
         })._validate_cid()
+
+
+def test_session_init_request_key_id_b_identifies_the_recipient_key_used_for_ct1():
+    # key_id_b lets the recipient (Bob) pick the right private key if he
+    # holds more than one, by comparing against a KeyId he computes
+    # himself from each candidate public key -- it should NOT match a
+    # different one of Bob's keys that ct1 wasn't actually encapsulated
+    # against.
+    pk_b_correct = _pk(fill=b"\x33")
+    pk_b_other = _pk(fill=b"\x44")
+    pk_a_star = _pk()
+    ct1 = _ct()  # stands in for "encapsulated against pk_b_correct"
+
+    req = SessionInitRequest({
+        "ct1": ct1,
+        "key_id_b": KeyId.build(pk_b_correct),
+        "pk_a_star": pk_a_star,
+        "key_id_a": KeyId.build(pk_a_star),
+        "acceptable_aeads": AeadAlgorithmList.build(["aes256-gcm"]),
+    })
+    parsed = SessionInitRequest.load(req.dump())
+
+    assert parsed["key_id_b"]["key_hash"].native == KeyId.build(pk_b_correct)["key_hash"].native
+    assert parsed["key_id_b"]["key_hash"].native != KeyId.build(pk_b_other)["key_hash"].native
 
 
 # ---------------------------------------------------------------------------
