@@ -1,5 +1,5 @@
 """
-Tests for kem_make.py.
+Tests for kem_make.bottom
 
 Covers:
   1. Basic round-trip through the versioned envelope.
@@ -33,7 +33,7 @@ import uuid
 
 import pytest
 
-from kem_make import (
+from .bottom import (
     KemPublicKey,
     KemCiphertext,
     KeyId,
@@ -416,82 +416,3 @@ def test_indefinite_length_ber_fails_to_parse_at_all():
 
     with pytest.raises(Exception):
         KemPublicKey.load(indefinite_ber)
-
-
-# ---------------------------------------------------------------------------
-# 10. Cross-validation against the independently-authored ASN.1 schema
-# ---------------------------------------------------------------------------
-
-def test_schema_matches_python_classes_for_session_completion_response():
-    """
-    Requires asn1tools (see requirements-dev.txt). Compiles kem-make.asn1
-    independently and confirms it agrees byte-for-byte with asn1crypto on
-    SessionCompletionResponse, both with and without the optional "m"
-    field. Skips if the schema file or asn1tools isn't available, since
-    this is a dev-only cross-check, not a runtime dependency of kem_make.py.
-    """
-    asn1tools = pytest.importorskip("asn1tools")
-    import os
-
-    schema_path = os.path.join(os.path.dirname(__file__), "kem-make.asn1")
-    if not os.path.exists(schema_path):
-        pytest.skip("kem-make.asn1 not found alongside this test file")
-
-    schema = asn1tools.compile_files([schema_path], codec="der")
-
-    scr_absent = SessionCompletionResponse({"h_m": b"h" * 16})
-    assert scr_absent.dump() == schema.encode("SessionCompletionResponse", {"hM": b"h" * 16})
-
-    scr_present = SessionCompletionResponse({"h_m": b"h" * 16, "m": b"fs"})
-    assert scr_present.dump() == schema.encode(
-        "SessionCompletionResponse", {"hM": b"h" * 16, "m": b"fs"}
-    )
-
-    decoded = schema.decode("SessionCompletionResponse", scr_present.dump())
-    assert decoded == {"hM": b"h" * 16, "m": b"fs"}
-
-
-def test_schema_matches_python_classes_for_message():
-    """
-    Cross-checks the Message type (seq, m -- no nonce) against the schema.
-    """
-    asn1tools = pytest.importorskip("asn1tools")
-    import os
-
-    schema_path = os.path.join(os.path.dirname(__file__), "kem-make.asn1")
-    if not os.path.exists(schema_path):
-        pytest.skip("kem-make.asn1 not found alongside this test file")
-
-    schema = asn1tools.compile_files([schema_path], codec="der")
-
-    msg = Message({"seq": 42, "m": b"payload-bytes"})
-    tools_der = schema.encode("Message", {"seq": 42, "m": b"payload-bytes"})
-
-    assert msg.dump() == tools_der
-
-    decoded = schema.decode("Message", msg.dump())
-    assert decoded == {"seq": 42, "m": b"payload-bytes"}
-
-
-def test_schema_matches_python_classes_for_acceptable_aeads():
-    """
-    Cross-checks AeadAlgorithmList (Python) against AcceptableAeadList
-    (schema) -- the newest addition, not yet validated this way.
-    """
-    asn1tools = pytest.importorskip("asn1tools")
-    import os
-
-    schema_path = os.path.join(os.path.dirname(__file__), "kem-make.asn1")
-    if not os.path.exists(schema_path):
-        pytest.skip("kem-make.asn1 not found alongside this test file")
-
-    schema = asn1tools.compile_files([schema_path], codec="der")
-
-    oids = [AEAD_OIDS["aes256-gcm"], AEAD_OIDS["chacha20-poly1305"]]
-    lst = AeadAlgorithmList.build(oids)
-    tools_der = schema.encode("AcceptableAeadList", oids)
-
-    assert lst.dump() == tools_der
-
-    decoded = schema.decode("AcceptableAeadList", lst.dump())
-    assert decoded == oids

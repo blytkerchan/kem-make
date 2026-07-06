@@ -13,7 +13,7 @@ from unittest import mock
 
 import pytest
 
-import crypto_backend as cb
+import kem_make.crypto_backend as cb
 
 
 def test_check_backend_passes_on_a_working_installation():
@@ -117,7 +117,7 @@ def test_mlkem_ciphertext_and_key_sizes_match_fips_203_table_3():
     # future cryptography release that changes behaviour is caught here
     # rather than only inside a live handshake.
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    from kem_make import MLKEM_CT_LEN, MLKEM_PK_LEN
+    from kem_make.bottom import MLKEM_CT_LEN, MLKEM_PK_LEN
 
     for level, cls in cb.MLKEM_BACKEND_CLASSES.items():
         priv = cls.generate()
