@@ -18,21 +18,34 @@ IMPORTS
     FROM PKIX1-PSS-OAEP-Algorithms-2009
         { iso(1) identified-organization(3) dod(6) internet(1)
           security(5) mechanisms(5) pkix(7) id-mod(0)
-          id-mod-pkix1-rsa-pkalgs-02(54) };
+          id-mod-pkix1-rsa-pkalgs-02(54) }
+    id-alg-ml-kem-512, id-alg-ml-kem-768, id-alg-ml-kem-1024
+    FROM X509-ML-KEM-2025
+        { iso(1) identified-organization(3) dod(6) internet(1)
+          security(5) mechanisms(5) pkix(7) id-mod(0)
+          id-mod-x509-ml-kem-2025(121) }
+    id-aes256-GCM
+    FROM NistAlgorithm
+        { joint-iso-itu-t ds(5) module(1) selectedAttributeTypes(5) 7 }
+    id-alg-AEADChaCha20Poly1305
+    FROM CMS-AEADChaCha20Poly1305
+        { iso(1) member-body(2) us(840) rsadsi(113549) pkcs(1)
+          pkcs-9(9) smime(16) modules(0) 66 };
 
--- ML-KEM OIDs (RFC 9935). parameters MUST be absent for all three, not
--- NULL; hence "PARAMS ARE absent" with no TYPE at all, rather than
--- "PARAMS TYPE NULL ARE absent". This specific form (an open type with no
--- associated type for some objects in the set) is the exact construct
--- disputed by RFC 5912 errata 4145, which argues it isn't well-formed
--- ASN.1. Written this way anyway because it's what ML-KEM's actual
--- requirement is: "PARAMS TYPE NULL ARE absent" would be internally
--- consistent ASN.1 but would misdescribe the wire format (implying a
--- NULL type is merely never chosen, rather than that no type applies at
--- all).
-id-alg-ml-kem-512  OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 1 }
-id-alg-ml-kem-768  OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 2 }
-id-alg-ml-kem-1024 OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 4 3 }
+-- ML-KEM OIDs, imported above from RFC 9935's own X509-ML-KEM-2025
+-- module. parameters MUST be absent for all three, not NULL; hence
+-- "PARAMS ARE absent" with no TYPE at all, rather than "PARAMS TYPE NULL
+-- ARE absent". This specific form (an open type with no associated type
+-- for some objects in the set) is the exact construct disputed by RFC
+-- 5912 errata 4145, which argues it isn't well-formed ASN.1. Written
+-- this way anyway because it's what ML-KEM's actual requirement is:
+-- "PARAMS TYPE NULL ARE absent" would be internally consistent ASN.1 but
+-- would misdescribe the wire format (implying a NULL type is merely
+-- never chosen, rather than that no type applies at all). RFC 9935's own
+-- module uses this exact same "PARAMS ARE absent" form for its
+-- pk-ml-kem-* PUBLIC-KEY objects (see asn1/X509-ML-KEM-2025.asn1),
+-- corroborating this is the intended representation despite errata
+-- 4145's unresolved concern.
 
 mlkem-512 ALGORITHM ::= {
     IDENTIFIER id-alg-ml-kem-512
@@ -52,7 +65,11 @@ mlkem-1024 ALGORITHM ::= {
 -- documented pattern for adding algorithms it doesn't cover (see e.g.
 -- PKInfoAlgorithms/SignatureAlgorithms placeholder object sets in RFC
 -- 5912 Section 4, explicitly commented "add any locally defined
--- algorithms here").
+-- algorithms here"). A better fit exists and isn't used here: RFC 9935's
+-- own X509-ML-KEM-2025 module imports a purpose-built KEM-ALGORITHM
+-- class from RFC 9629 (KEMAlgorithmInformation-2023) rather than the
+-- generic ALGORITHM class below. Worth switching to if RFC 9629 is
+-- ever vendored into this repo.
 MlkemAlgorithms ALGORITHM ::= { mlkem-512 | mlkem-768 | mlkem-1024, ... }
 
 KemPublicKey ::= SEQUENCE {
@@ -87,17 +104,16 @@ KeyId ::= SEQUENCE {
 -- MAKE protocol PDUs
 -- === section ===
 
--- AEAD algorithm OIDs used for negotiation only: a bare OBJECT IDENTIFIER,
--- not a full AlgorithmIdentifier. AES-GCM (RFC 5084) normally requires a
--- present parameters field with actual nonce/ICV-length data when used as
--- a real AlgorithmIdentifier for encryption; that requirement does not
--- apply here, since these fields only carry the OID for capability
+-- AEAD algorithm OIDs, imported above from their canonical modules,
+-- used for negotiation only: a bare OBJECT IDENTIFIER, not a full
+-- AlgorithmIdentifier. AES-GCM (RFC 5084) normally requires a present
+-- parameters field with actual nonce/ICV-length data when used as a real
+-- AlgorithmIdentifier for encryption; that requirement does not apply
+-- here, since these fields only carry the OID for capability
 -- negotiation, analogous to how RFC 8103 defines SMIMECapability
--- announcement (OID only, parameters omitted).
-id-aes128-gcm           OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 1 6 }
-id-aes192-gcm           OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 1 26 }
-id-aes256-gcm           OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 1 46 }
-id-chacha20-poly1305    OBJECT IDENTIFIER ::= { 1 2 840 113549 1 9 16 3 18 }
+-- announcement (OID only, parameters omitted). AES-128-GCM and
+-- AES-192-GCM deliberately excluded: neither is used anywhere in this
+-- project.
 
 AcceptableAeadList ::= SEQUENCE OF OBJECT IDENTIFIER
 

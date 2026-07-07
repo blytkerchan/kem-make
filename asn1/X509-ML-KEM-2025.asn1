@@ -1,0 +1,127 @@
+-- Vendored from RFC 9935, Appendix A ("ASN.1 Module"), verbatim.
+-- https://www.rfc-editor.org/rfc/rfc9935
+--
+-- This module's own IMPORTS (PUBLIC-KEY from AlgorithmInformation-2009,
+-- KEM-ALGORITHM from KEMAlgorithmInformation-2023 / RFC 9629) are not
+-- both vendored in this repo. AlgorithmInformation-2009.asn1 is
+-- present, KEMAlgorithmInformation-2023.asn1 is not. This file is kept
+-- here for its canonical id-alg-ml-kem-{512,768,1024} OID values, which
+-- KEM-MAKE-2026.asn1 imports; the pk-ml-kem-* PUBLIC-KEY objects and
+-- private-key CHOICE types below are X.509-certificate-specific and not
+-- otherwise used by this project (this project's own private key
+-- representation, in keystore.py, is the raw 64-octet seed only, not the
+-- seed/expandedKey/both CHOICE this module defines for certificates).
+
+X509-ML-KEM-2025
+{ iso(1) identified-organization(3) dod(6)
+  internet(1) security(5) mechanisms(5) pkix(7) id-mod(0)
+  id-mod-x509-ml-kem-2025(121) }
+
+DEFINITIONS IMPLICIT TAGS ::= BEGIN
+
+EXPORTS ALL;
+
+IMPORTS
+
+ PUBLIC-KEY
+   FROM AlgorithmInformation-2009  -- [RFC 5912]
+     { iso(1) identified-organization(3) dod(6) internet(1)
+       security(5) mechanisms(5) pkix(7) id-mod(0)
+       id-mod-algorithmInformation-02(58) }
+
+ KEM-ALGORITHM
+   FROM KEMAlgorithmInformation-2023  -- [RFC 9629]
+     { iso(1) identified-organization(3) dod(6) internet(1)
+       security(5) mechanisms(5) pkix(7) id-mod(0)
+       id-mod-kemAlgorithmInformation-2023(109) };
+
+--
+-- ML-KEM Identifiers
+--
+
+nistAlgorithms OBJECT IDENTIFIER ::= { joint-iso-ccitt(2)
+  country(16) us(840) organization(1) gov(101) csor(3)
+  nistAlgorithm(4) }
+
+kems OBJECT IDENTIFIER ::= { nistAlgorithms 4 }
+
+id-alg-ml-kem-512 OBJECT IDENTIFIER ::= { kems 1 }
+
+id-alg-ml-kem-768 OBJECT IDENTIFIER ::= { kems 2 }
+
+id-alg-ml-kem-1024 OBJECT IDENTIFIER ::= { kems 3 }
+
+--
+-- Public Key Algorithms
+--
+
+PublicKeys PUBLIC-KEY ::= {
+  -- This expands PublicKeys from [RFC 5912]
+  pk-ml-kem-512 |
+  pk-ml-kem-768 |
+  pk-ml-kem-1024,
+  ...
+  }
+
+--
+-- ML-KEM Public Keys
+--
+
+pk-ml-kem-512 PUBLIC-KEY ::= {
+  IDENTIFIER id-alg-ml-kem-512
+  -- KEY no ASN.1 wrapping; 800 octets --
+  PARAMS ARE absent
+  CERT-KEY-USAGE { keyEncipherment }
+  PRIVATE-KEY ML-KEM-512-PrivateKey
+  }
+
+ML-KEM-512-PrivateKey ::= CHOICE {
+  seed [0] OCTET STRING (SIZE (64)),
+  expandedKey OCTET STRING (SIZE (1632)),
+  both SEQUENCE {
+      seed OCTET STRING (SIZE (64)),
+      expandedKey OCTET STRING (SIZE (1632))
+      }
+  }
+
+pk-ml-kem-768 PUBLIC-KEY ::= {
+  IDENTIFIER id-alg-ml-kem-768
+  -- KEY no ASN.1 wrapping; 1184 octets --
+  PARAMS ARE absent
+  CERT-KEY-USAGE { keyEncipherment }
+  PRIVATE-KEY ML-KEM-768-PrivateKey
+  }
+
+ML-KEM-768-PrivateKey ::= CHOICE {
+  seed [0] OCTET STRING (SIZE (64)),
+  expandedKey OCTET STRING (SIZE (2400)),
+  both SEQUENCE {
+      seed OCTET STRING (SIZE (64)),
+      expandedKey OCTET STRING (SIZE (2400))
+      }
+  }
+
+pk-ml-kem-1024 PUBLIC-KEY ::= {
+  IDENTIFIER id-alg-ml-kem-1024
+  -- KEY no ASN.1 wrapping; 1568 octets --
+  PARAMS ARE absent
+  CERT-KEY-USAGE { keyEncipherment }
+  PRIVATE-KEY ML-KEM-1024-PrivateKey
+  }
+
+ML-KEM-1024-PrivateKey ::= CHOICE {
+  seed [0] OCTET STRING (SIZE (64)),
+  expandedKey OCTET STRING (SIZE (3168)),
+  both SEQUENCE {
+      seed OCTET STRING (SIZE (64)),
+      expandedKey OCTET STRING (SIZE (3168))
+      }
+  }
+
+ML-KEM-512-PublicKey ::= OCTET STRING (SIZE (800))
+
+ML-KEM-768-PublicKey ::= OCTET STRING (SIZE (1184))
+
+ML-KEM-1024-PublicKey ::= OCTET STRING (SIZE (1568))
+
+END

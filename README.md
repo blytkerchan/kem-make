@@ -17,7 +17,7 @@ kem-make/
 │   ├── test_crypto_backend.py # pytest suite for crypto_backend.py
 │   ├── test_keystore.py       # pytest suite for keystore.py
 │   └── __init__.py            # re-exports the public API from bottom.py
-├── kem-make.asn1              # hand-written ASN.1 schema; documentation only, see below
+├── KEM-MAKE-2026.asn1         # hand-written ASN.1 schema; documentation only, see below
 ├── features/                  # Gherkin feature files (BDD)
 │   ├── *.feature
 │   └── steps/
@@ -83,7 +83,7 @@ false-start message. This is enforced on `build()`, on `load()`, and on
 everywhere else in this codebase, not exclusively through `build()`, so
 `dump()` is the one chokepoint every send path goes through regardless of
 construction method. Raises `EmptyFalseStartPayload`. `SIZE(1..MAX)` in
-`kem-make.asn1` expresses the same constraint directly in the grammar.
+`KEM-MAKE-2026.asn1` expresses the same constraint directly in the grammar.
 This is a structural floor (non-zero length), not a cryptographic one —
 it doesn't enforce a real AEAD's actual minimum ciphertext length (e.g. a
 16-byte tag); that's a separate concern for whatever layer actually knows
@@ -124,7 +124,9 @@ responder picked. These are bare OIDs, not full `AlgorithmIdentifier`
 structures — this is capability negotiation, not the AEAD's own
 per-message parameters (nonce, ICV length, etc.), which are handled
 elsewhere. `AEAD_OIDS` in `bottom.py` has the currently known algorithms
-(AES-128/192/256-GCM per RFC 5084, ChaCha20-Poly1305 per RFC 8103).
+(AES-256-GCM per RFC 5084, ChaCha20-Poly1305 per RFC 8103) —
+AES-128-GCM and AES-192-GCM deliberately not included, since neither is
+used anywhere in this project.
 `acceptableAeads` deliberately accepts unrecognized OIDs on load — it's
 peer-advertised and forward compatibility matters there — while
 `chosenAead` should be checked against the OIDs actually offered at the
@@ -322,25 +324,33 @@ the module docstring rather than silently left out.
 
 ## Keeping the schema in sync
 
-`kem-make.asn1` is maintained by hand. asn1crypto has no schema exporter (nor
+`KEM-MAKE-2026.asn1` is maintained by hand. asn1crypto has no schema exporter (nor
 does pyasn1), so there's no tooling guarantee that the `.asn1` file and
 `bottom.py` agree — any field, tag, or type change to one **must** be
 mirrored in the other manually. `bottom.py` is authoritative; the `.asn1`
 file exists for readability and for interop with other ASN.1 toolchains.
 
-**`kem-make.asn1` does not compile with any tool currently in this repo, and
+**`KEM-MAKE-2026.asn1` does not compile with any tool currently in this repo, and
 that's expected.** `KemPublicKey`, `KemCiphertext`, and `KeyId` use RFC
 5912's real, canonical parameterized `AlgorithmIdentifier{}` (information
 object classes, X.681–683), imported from `AlgorithmInformation-2009` /
-`PKIX1-PSS-OAEP-Algorithms-2009`. Those imported modules aren't vendored
-into this repo, and even if they were: three independently-built
-open-source ASN.1 compilers were tested against this exact construct
-(`asn1tools`, Erlang/OTP's `asn1ct`, Heimdal's `asn1_compile`) and none can
-fully resolve it — `asn1tools` fails to resolve the governed open type at
-all; `asn1ct` resolves it directly but crashes specifically when it's
-wrapped in a reusable parameterized type; Heimdal's grammar has no support
-for information object classes whatsoever (the `&`-field syntax doesn't
-even tokenize). See the schema file's own comments for the full account.
+`PKIX1-PSS-OAEP-Algorithms-2009` — both now vendored under `asn1/`, along
+with `NistAlgorithm`, `X509-ML-KEM-2025` (RFC 9935), and
+`CMS-AEADChaCha20Poly1305` (RFC 8103), which supply the canonical
+ML-KEM/AES-256-GCM/ChaCha20-Poly1305 OIDs this schema now imports rather
+than redefining locally. Vendoring the real files didn't change the
+conclusion, but it's worth noting the failure re-verified differently
+than before: `asn1tools` now fails just *parsing*
+`AlgorithmInformation-2009.asn1` itself, at `SIGNATURE-ALGORITHM`'s
+`&HashSet` field (a SET-valued class field its parser doesn't support),
+before ever reaching this schema's own use of `AlgorithmIdentifier{}`.
+Three independently-built open-source ASN.1 compilers were tested against
+this exact construct (`asn1tools`, Erlang/OTP's `asn1ct`, Heimdal's
+`asn1_compile`) and none can fully resolve it — `asn1ct` resolves it
+directly but crashes specifically when it's wrapped in a reusable
+parameterized type; Heimdal's grammar has no support for information
+object classes whatsoever (the `&`-field syntax doesn't even tokenize).
+See the schema file's own comments for the full account.
 
 This has a wider consequence than just those three types: `asn1tools`
 requires a module's `IMPORTS` to resolve before it can compile *anything*
@@ -352,7 +362,7 @@ uncompilable as a single unit, including `SessionCompletionResponse`,
 `Message`, and `AcceptableAeadList`, none of which touch
 `AlgorithmIdentifier` at all.
 
-`kem-make.asn1` is therefore documentation only from here on — a spec
+`KEM-MAKE-2026.asn1` is therefore documentation only from here on — a spec
 reference for readers, not a tool-verified artifact. `bottom.py` remains
 the authoritative, tested definition of the actual wire format, and its
 DER output is byte-for-byte identical to what the canonical schema
@@ -423,11 +433,11 @@ Still open:
 - **`test_bottom.py` is missing the three schema cross-check tests**
   (`test_schema_matches_python_classes_for_session_completion_response`,
   `_for_message`, `_for_acceptable_aeads`) and the `_compile_schema_or_skip()`
-  helper that makes them skip gracefully now that `kem-make.asn1` is
+  helper that makes them skip gracefully now that `KEM-MAKE-2026.asn1` is
   documentation-only. Worth confirming whether dropping them was
   deliberate (reasonable, since they'll now always skip) or this file
   predates that change.
 
-None of these affect `bottom.py`, `crypto_backend.py`, or `kem-make.asn1`
+None of these affect `bottom.py`, `crypto_backend.py`, or `KEM-MAKE-2026.asn1`
 themselves — those three are unchanged from the last verified state and
 still pass their existing tests.
