@@ -118,7 +118,6 @@ def check_backend() -> None:
     for level, cls in MLKEM_BACKEND_CLASSES.items():
         _check_mlkem(level, cls)
 
-    _check_aead("AES-128-GCM", AESGCM, {"bit_length": 128})
     _check_aead("AES-256-GCM", AESGCM, {"bit_length": 256})
     _check_aead("ChaCha20-Poly1305", ChaCha20Poly1305, {})
 

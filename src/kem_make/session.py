@@ -109,7 +109,7 @@ _MLKEM_PUBLIC_CLASSES = {768: mlkem.MLKEM768PublicKey, 1024: mlkem.MLKEM1024Publ
 _MLKEM_PRIVATE_CLASSES = {768: mlkem.MLKEM768PrivateKey, 1024: mlkem.MLKEM1024PrivateKey}
 _OID_TO_LEVEL = {oid: level for level, oid in MLKEM_OIDS.items() if level in _MLKEM_PRIVATE_CLASSES}
 
-_AEAD_KEY_LENGTHS = {"aes128-gcm": 16, "aes256-gcm": 32, "chacha20-poly1305": 32}
+_AEAD_KEY_LENGTHS = {"aes256-gcm": 32, "chacha20-poly1305": 32}
 _AEAD_NONCE_LENGTH = 12  # both AES-GCM and ChaCha20-Poly1305 use 12-byte nonces
 
 
@@ -189,7 +189,7 @@ def _nonce_for_seq(iv: bytes, seq: int) -> bytes:
 
 
 def _aead_cipher(aead: str, key: bytes):
-    if aead in ("aes128-gcm", "aes256-gcm"):
+    if aead == "aes256-gcm":
         return AESGCM(key)
     if aead == "chacha20-poly1305":
         return ChaCha20Poly1305(key)

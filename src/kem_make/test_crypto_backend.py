@@ -99,7 +99,7 @@ def test_check_backend_detects_broken_aead():
     with mock.patch.object(
         AESGCM, "encrypt", side_effect=NotImplementedError("simulated broken AEAD"),
     ):
-        with pytest.raises(cb.CryptoBackendUnsupported, match="AES-128-GCM"):
+        with pytest.raises(cb.CryptoBackendUnsupported, match="AES-256-GCM"):
             cb.check_backend()
 
 

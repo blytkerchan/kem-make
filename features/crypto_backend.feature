@@ -57,15 +57,22 @@ Feature: Crypto backend capability check
 
     Examples:
       | algorithm         |
-      | AES-128-GCM        |
       | AES-256-GCM        |
       | ChaCha20-Poly1305   |
 
   Scenario: A broken AEAD primitive is caught, not silently ignored
-    Given AES-128-GCM encryption is broken on this backend
+    Given AES-256-GCM encryption is broken on this backend
     When I run the crypto backend check
     Then the check fails with CryptoBackendUnsupported
-    And the failure message names "AES-128-GCM"
+    And the failure message names "AES-256-GCM"
+
+  Scenario: AES-128-GCM and AES-192-GCM are deliberately not checked
+    # Unlike ML-KEM-512 (excluded because the library doesn't offer it),
+    # AES-128-GCM and AES-192-GCM ARE available in the underlying
+    # cryptography library -- they're excluded because this project
+    # doesn't negotiate them (see bottom.py's AEAD_OIDS), so checking
+    # them at startup would verify something that's never actually used.
+    Then exactly AES-256-GCM and ChaCha20-Poly1305 are the AEAD algorithms the crypto backend check covers
 
   Scenario: HKDF-SHA256 derives a key of the requested length
     When I derive a 32-byte key with HKDF-SHA256
@@ -73,13 +80,13 @@ Feature: Crypto backend capability check
 
   Scenario: The check stops at the first broken primitive rather than checking everything
     # check_backend() checks ML-KEM-768, then ML-KEM-1024, then
-    # AES-128-GCM, then AES-256-GCM, then ChaCha20-Poly1305, then HKDF,
-    # in that order, and does not catch-and-continue past a failure.
+    # AES-256-GCM, then ChaCha20-Poly1305, then HKDF, in that order, and
+    # does not catch-and-continue past a failure.
     Given ML-KEM-768 key generation is broken on this backend
-    And AES-128-GCM encryption is also broken on this backend
+    And AES-256-GCM encryption is also broken on this backend
     When I run the crypto backend check
     Then the check fails with CryptoBackendUnsupported
-    And the failure message names "ML-KEM-768", not "AES-128-GCM"
+    And the failure message names "ML-KEM-768", not "AES-256-GCM"
 
   Scenario Outline: ML-KEM public key and ciphertext sizes match FIPS 203 Table 3
     # Cross-checked against kem_make.bottom's own length constants, so a

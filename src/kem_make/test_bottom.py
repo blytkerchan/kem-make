@@ -346,9 +346,9 @@ def test_acceptable_aeads_round_trips_by_name():
 
 
 def test_acceptable_aeads_round_trips_by_raw_oid():
-    lst = AeadAlgorithmList.build([AEAD_OIDS["aes128-gcm"]])
+    lst = AeadAlgorithmList.build([AEAD_OIDS["aes256-gcm"]])
     parsed = AeadAlgorithmList.load(lst.dump())
-    assert parsed.native == [AEAD_OIDS["aes128-gcm"]]
+    assert parsed.native == [AEAD_OIDS["aes256-gcm"]]
 
 
 def test_acceptable_aeads_rejects_empty_list():
@@ -383,7 +383,7 @@ def test_session_init_response_chosen_aead_round_trips():
     assert aead_name(parsed["chosen_aead"].native) == "aes256-gcm"
 
 
-@pytest.mark.parametrize("name", ["aes128-gcm", "aes256-gcm", "chacha20-poly1305"])
+@pytest.mark.parametrize("name", ["aes256-gcm", "chacha20-poly1305"])
 def test_all_known_aead_oids_round_trip(name):
     resp = SessionInitResponse({
         "key_id_b": KeyId.build(_pk()),

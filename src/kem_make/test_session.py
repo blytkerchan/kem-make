@@ -159,7 +159,7 @@ def test_session_key_derivation_directions_are_independent():
 
 
 @pytest.mark.parametrize("aead,expected_key_len", [
-    ("aes128-gcm", 16), ("aes256-gcm", 32), ("chacha20-poly1305", 32),
+    ("aes256-gcm", 32), ("chacha20-poly1305", 32),
 ])
 def test_session_key_derivation_respects_aead_key_length(aead, expected_key_len):
     keys = derive_session_keys(b"n" * 16, b"n" * 16, b"fa", b"s1", b"s2", b"s3", b"s4", aead)
@@ -512,7 +512,7 @@ def test_no_mutual_aead_is_rejected(parties):
     # on "bob.config" would silently mutate the same object twice --
     # caught exactly this way while writing this test, which is why each
     # party gets its own SessionConfig below instead.
-    alice_config = SessionConfig(acceptable_aeads=("aes128-gcm",))
+    alice_config = SessionConfig(acceptable_aeads=("aes256-gcm",))
     bob_config = SessionConfig(acceptable_aeads=("chacha20-poly1305",))
 
     alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"], alice_config)

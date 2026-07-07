@@ -72,7 +72,6 @@ CID_LEN = 16  # 128-bit binary UUID
 # AEAD algorithm OIDs used for negotiation only (bare OID, no parameters).
 # AES-GCM family: RFC 5084. ChaCha20-Poly1305: RFC 8103.
 AEAD_OIDS = {
-    "aes128-gcm": "2.16.840.1.101.3.4.1.6",
     "aes256-gcm": "2.16.840.1.101.3.4.1.46",
     "chacha20-poly1305": "1.2.840.113549.1.9.16.3.18",
 }

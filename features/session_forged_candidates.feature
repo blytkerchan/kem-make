@@ -39,7 +39,7 @@ Feature: Rejecting forged and unauthenticated handshake messages
     And "bob_layer" has no PDU ready to send
 
   Scenario: A handshake with no mutually acceptable AEAD algorithm is rejected
-    Given "alice_layer" only accepts AEAD "aes128-gcm"
+    Given "alice_layer" only accepts AEAD "aes256-gcm"
     And "bob_layer" only accepts AEAD "chacha20-poly1305"
     When "alice_layer" initiates a handshake with "bob"
     And "bob_layer" receives "alice_layer"'s outgoing PDU
