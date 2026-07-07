@@ -244,13 +244,23 @@ these):
 - **Passphrase → master key** via PBKDF2-HMAC-SHA256, 600,000 iterations
   by default (OWASP's current cited PBKDF2 minimum, chosen for FIPS
   alignment with the rest of this project — Argon2id is OWASP's overall
-  top pick if FIPS compliance isn't actually a requirement here).
+  top pick if FIPS compliance isn't actually a requirement here). **The
+  master key is derived, never stored** — `header.der` holds only the
+  PBKDF2 salt, iteration count, and a verification tag, never the key
+  itself. `test_keystore.py` backs this with a test that scans every byte
+  of every file the module writes, across several passphrases and
+  iteration counts, and confirms the raw master key never appears in any
+  of them.
 - **Every private key gets its own KEK**, derived via HKDF-SHA256 from
   the master key with a fresh random salt and an info field that binds in
   a domain-separation label plus that key's own identity. Compromising
-  one key's KEK reveals nothing about any other key's, and a fresh salt
-  on every write means the KEK — and therefore the AES-256-GCM nonce
-  space it's used with — is never reused across writes.
+  one key's KEK reveals nothing about any other key's.
+- **Private keys are wrapped with AES-256 Key Wrap with Padding (RFC 3394
+  / RFC 5649)**, not an AEAD — there's no nonce to manage, since AES-KW
+  has none; it's deterministic instead (same key bytes + same KEK always
+  produces the same wrapped output), which is fine here specifically
+  because no two entries ever share a KEK. Its own built-in integrity
+  check catches tampering on unwrap, raising `PrivateKeyUnwrapFailed`.
 - **Public keys are never encrypted** — there's nothing to protect — but
   they're also not currently integrity-protected against on-disk
   tampering by someone with filesystem write access; see the module

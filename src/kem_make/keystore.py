@@ -18,12 +18,21 @@ for the default case: an O(1) filesystem path, no scan, no recompute.
 
 Key derivation
 --------------
-passphrase --PBKDF2-HMAC-SHA256--> master_key (32 bytes, stored alongside:
-    salt, iteration count)
+passphrase --PBKDF2-HMAC-SHA256--> master_key (32 bytes)
 master_key --HKDF-SHA256(salt=random per-key, info=domain label + key
     identity)--> per-key KEK (32 bytes)
-per-key KEK --AES-256-GCM(nonce=random per-encryption)--> encrypted private
-    key bytes
+per-key KEK --AES-256 Key Wrap with Padding (RFC 3394 / RFC 5649)-->
+    wrapped private key bytes
+
+The master key is DERIVED, NEVER STORED. header.der holds only the
+PBKDF2 salt, the iteration count, and a verification tag -- the
+ingredients needed to re-derive the same master key from the correct
+passphrase, plus a way to confirm that passphrase is correct, but never
+the master key itself in any form. This is an explicit design invariant,
+not just a description of current behavior: test_keystore.py has a test
+that reads every byte of every file this module writes and confirms the
+raw master key never appears in any of them, for a range of different
+passphrases and iteration counts.
 
 Every private key gets its OWN KEK, derived with its own random salt and
 an info field that binds in that key's identity (its primary KeyId's DER
@@ -32,13 +41,14 @@ nothing about any other key's KEK, since each derivation is independent
 given a fresh salt; (b) the info field's domain-separation label and
 per-key identity binding mean this exact same master_key could not be
 reused to derive an identical KEK for a different purpose or a different
-key by accident; (c) if a private key entry is ever re-saved, a fresh
-random salt is drawn, so the KEK -- and therefore the nonce space it's
-used with -- is different every time, which is what actually matters for
-AES-GCM safety (nonce reuse under the same key is catastrophic; here,
-the key itself is never reused across writes, so nonce reuse can't
-happen even though nonces are also independently randomized as defense
-in depth).
+key by accident. AES Key Wrap (unlike AES-GCM) is deterministic -- there
+is no nonce, and wrapping the same key bytes under the same KEK always
+produces the same wrapped output. That's fine here specifically because
+no two entries ever share a KEK (each private key's KEK comes from its
+own random salt), so this determinism never creates a correlation
+between different stored entries. If this module is ever changed to
+reuse a KEK across more than one wrap operation, that assumption would
+need to be revisited.
 
 Public keys are never encrypted -- there is nothing to protect: anyone
 who has the public key is supposed to have it. What they DO get is
@@ -72,9 +82,12 @@ Side-channel and hygiene notes
   digest, hash, or other secret-derived material added to this module
   must use compare_digest (or _key_hash_equal, for KeyId specifically),
   never a plain `==`.
-- AEAD tag verification itself is handled inside `cryptography`'s AESGCM
-  implementation, which already does this correctly; we do not
-  re-implement or second-guess it.
+- Integrity verification of wrapped private key material is handled
+  inside `cryptography`'s AES Key Wrap implementation (RFC 3394/5649's
+  own integrity check value, verified during unwrap), which raises
+  InvalidUnwrap on failure -- translated here into
+  PrivateKeyUnwrapFailed. We do not re-implement or second-guess that
+  check.
 - Exceptions in this module never include passphrase, master key, KEK, or
   private key bytes in their message, including in the wrong-passphrase
   case (which reports failure only, not what was wrong or what was
@@ -97,8 +110,8 @@ Side-channel and hygiene notes
 - All writes are atomic: a temp file in the same directory, then
   os.replace(). A crash mid-write cannot leave a half-written key file
   that then parses as valid-but-wrong.
-- Salts and nonces are generated with os.urandom (OS CSPRNG), never
-  Python's `random` module.
+- Salts (the PBKDF2 salt and every per-key KEK salt) are generated with
+  os.urandom (OS CSPRNG), never Python's `random` module.
 
 Known limitations (not addressed here; flagging rather than silently
 omitting)
@@ -136,15 +149,18 @@ from asn1crypto.algos import DigestAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.keywrap import (
+    aes_key_wrap_with_padding,
+    aes_key_unwrap_with_padding,
+    InvalidUnwrap,
+)
 
-from .bottom import KemPublicKey, KeyId, AEAD_OIDS, _require_der
+from .bottom import KemPublicKey, KeyId, _require_der
 
 MASTER_KEY_LEN = 32          # 256-bit master key from PBKDF2
 KEK_LEN = 32                 # 256-bit per-key KEK from HKDF, for AES-256-GCM
 KDF_SALT_LEN = 16            # 128 bits, NIST's stated minimum
 KEK_SALT_LEN = 16
-NONCE_LEN = 12                # standard AES-GCM nonce length
 CHECK_TAG_LEN = 32            # HMAC-SHA256 output length
 
 # OWASP's current cited minimum for PBKDF2-HMAC-SHA256 (2026 sources).
@@ -157,7 +173,7 @@ _DOMAIN_KEK = b"kem-make-keystore-kek-v1"
 _DOMAIN_CHECK = b"kem-make-keystore-check-v1"
 _CHECK_VALUE = b"kem-make-keystore-checkvalue-v1"
 
-_AEAD_ALGORITHM_OID = AEAD_OIDS["aes256-gcm"]
+_WRAP_ALGORITHM_OID = "2.16.840.1.101.3.4.1.48"  # id-aes256-wrap-pad, RFC 5649
 
 
 class KeyDirectoryError(Exception):
@@ -184,6 +200,13 @@ class PrivateKeyRequiresPublicKey(KeyDirectoryError):
     """Raised when add_private_key() is called for a public key that was
     never added with add_public_key() -- private keys are always linked
     to a registered public key entry, never stored standalone."""
+    pass
+
+
+class PrivateKeyUnwrapFailed(KeyDirectoryError):
+    """Raised when AES-KW unwrap fails integrity verification -- either
+    the stored entry was tampered with, or (should not happen once
+    open() has already verified the passphrase) the wrong KEK was used."""
     pass
 
 
@@ -287,9 +310,8 @@ class StoredPrivateKeyEntry(Sequence):
     _fields = [
         ("key_id", KeyId),               # primary (SHA-256) reference
         ("kek_salt", OctetString),
-        ("aead_algorithm", ObjectIdentifier),
-        ("nonce", OctetString),
-        ("ciphertext", OctetString),      # AEAD ciphertext, tag included
+        ("wrap_algorithm", ObjectIdentifier),
+        ("wrapped_key", OctetString),      # RFC 5649 AES-256 key wrap output
     ]
 
     @classmethod
@@ -519,19 +541,16 @@ class KeyDirectory:
 
         kek_salt = os.urandom(KEK_SALT_LEN)
         kek = _derive_kek(bytes(self._master_key), kek_salt, primary.dump())
-        nonce = os.urandom(NONCE_LEN)
         try:
-            aesgcm = AESGCM(bytes(kek))
-            ciphertext = aesgcm.encrypt(nonce, private_key_bytes, None)
+            wrapped_key = aes_key_wrap_with_padding(bytes(kek), private_key_bytes)
         finally:
             _zero(kek)
 
         entry = StoredPrivateKeyEntry({
             "key_id": primary,
             "kek_salt": kek_salt,
-            "aead_algorithm": _AEAD_ALGORITHM_OID,
-            "nonce": nonce,
-            "ciphertext": ciphertext,
+            "wrap_algorithm": _WRAP_ALGORITHM_OID,
+            "wrapped_key": wrapped_key,
         })
         _atomic_write(self._private_path(hex_id), entry.dump(), 0o600)
         return primary
@@ -556,13 +575,16 @@ class KeyDirectory:
         stored = StoredPrivateKeyEntry.load(path.read_bytes())
 
         kek_salt = stored["kek_salt"].native
-        nonce = stored["nonce"].native
-        ciphertext = stored["ciphertext"].native
+        wrapped_key = stored["wrapped_key"].native
 
         kek = _derive_kek(bytes(self._master_key), kek_salt, stored["key_id"].dump())
         try:
-            aesgcm = AESGCM(bytes(kek))
-            plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+            plaintext = aes_key_unwrap_with_padding(bytes(kek), wrapped_key)
+        except InvalidUnwrap as e:
+            raise PrivateKeyUnwrapFailed(
+                f"integrity check failed unwrapping private key {hex_id} "
+                f"(tampered entry, or corrupted on disk)"
+            ) from e
         finally:
             _zero(kek)
 

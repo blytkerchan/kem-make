@@ -26,6 +26,13 @@ Covers:
       _key_hash_equal), not `==`, at both the primary-entry and
       alt-index lookup sites -- confirmed actually invoked, not just
       present in the source.
+  13. The master key is derived from the passphrase and never written to
+      disk: every byte of every file this module writes is scanned for
+      the raw master key, across several passphrases and iteration
+      counts, and header.der is confirmed to hold only the KDF salt,
+      iteration count, and verification tag -- never the key itself.
+  14. AES Key Wrap (RFC 3394/5649) integrity: tampering with a stored
+      wrapped_key is caught on unwrap and raises PrivateKeyUnwrapFailed.
 
 Run with: pytest test_keystore.py -v
 """
@@ -182,7 +189,7 @@ def test_get_public_key_not_found(tmp_path):
 # 5. Per-key KEK independence
 # ---------------------------------------------------------------------------
 
-def test_each_private_key_gets_independent_salt_and_nonce(tmp_path):
+def test_each_private_key_gets_independent_kek_salt(tmp_path):
     pk1 = _pk(fill=b"\x33")
     pk2 = _pk(fill=b"\x44")
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
@@ -196,7 +203,6 @@ def test_each_private_key_gets_independent_salt_and_nonce(tmp_path):
     e2 = StoredPrivateKeyEntry.load(kd._private_path(kd._hex_of(kid2)).read_bytes())
 
     assert e1["kek_salt"].native != e2["kek_salt"].native
-    assert e1["nonce"].native != e2["nonce"].native
 
     # And both still decrypt correctly, independently of one another.
     assert bytes(kd.get_private_key(kid1)) == b"a" * 32
@@ -295,9 +301,9 @@ def test_load_rejects_non_canonical_private_key_entry(tmp_path):
 
     path = kd._private_path(kd._hex_of(key_id))
     der = path.read_bytes()
-    assert der[1] == 0x81  # long-form, one length octet
-    length_value = der[2]
-    non_minimal = der[0:1] + bytes([0x82, 0x00, length_value]) + der[3:]
+    assert der[1] < 0x80  # short-form length
+    length_value = der[1]
+    non_minimal = der[0:1] + bytes([0x81, length_value]) + der[2:]
     path.write_bytes(non_minimal)
 
     with pytest.raises(NonCanonicalEncoding):
@@ -435,3 +441,83 @@ def test_create_refuses_non_empty_directory(tmp_path):
 
     with pytest.raises(KeyDirectoryError):
         KeyDirectory.create(path, b"pass", iterations=_FAST_ITERATIONS)
+
+
+# ---------------------------------------------------------------------------
+# 13. The master key is derived, never stored
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("passphrase,iterations", [
+    (b"correct horse battery staple", 100),
+    (b"a", 1),
+    (b"a much longer passphrase than the others, well over sixty-four bytes long to exercise HMAC pre-hashing", 500),
+])
+def test_master_key_never_appears_in_any_written_file(tmp_path, passphrase, iterations):
+    path = tmp_path / "kd"
+    kd = KeyDirectory.create(path, passphrase, iterations=iterations)
+    master_key_bytes = bytes(kd._master_key)  # snapshot before it's zeroed by anything
+
+    pk1 = _pk(fill=b"\x11")
+    pk2 = _pk(fill=b"\x22")
+    kid1 = kd.add_public_key(pk1)
+    kd.add_private_key(pk1, b"private-key-material-one-32byte")
+    kid2 = kd.add_public_key(pk2)
+    kd.add_private_key(pk2, b"private-key-material-two-32byte")
+    kd.key_id_for(kid1, digest="sha384")  # also exercises alt_index.der
+
+    all_bytes = b""
+    for f in path.rglob("*"):
+        if f.is_file():
+            all_bytes += f.read_bytes()
+
+    assert master_key_bytes not in all_bytes, (
+        "the derived master key must never appear in any file this module writes"
+    )
+    kd.close()
+
+
+def test_header_contains_only_kdf_ingredients_not_the_master_key(tmp_path):
+    # More targeted than the scan above: confirms header.der specifically
+    # holds only what's needed to re-derive the master key (salt,
+    # iterations) plus a verification tag, not the key itself.
+    from kem_make.keystore import KeystoreHeader
+
+    path = tmp_path / "kd"
+    kd = KeyDirectory.create(path, b"pass", iterations=_FAST_ITERATIONS)
+    master_key_bytes = bytes(kd._master_key)
+
+    header = KeystoreHeader.load((path / "header.der").read_bytes())
+    assert set(f[0] for f in KeystoreHeader._fields) == {
+        "version", "kdf_salt", "kdf_iterations", "verification_tag",
+    }
+    assert master_key_bytes not in header.dump()
+    kd.close()
+
+
+# ---------------------------------------------------------------------------
+# 14. AES Key Wrap integrity: tampering with wrapped_key is caught
+# ---------------------------------------------------------------------------
+
+def test_tampered_wrapped_key_is_rejected(tmp_path):
+    from kem_make.keystore import PrivateKeyUnwrapFailed, StoredPrivateKeyEntry
+
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+    kd.add_private_key(pk, b"a" * 32)
+
+    path = kd._private_path(kd._hex_of(key_id))
+    stored = StoredPrivateKeyEntry.load(path.read_bytes())
+    tampered_wrapped = bytearray(stored["wrapped_key"].native)
+    tampered_wrapped[0] ^= 0xFF  # flip a bit in the wrapped key material
+
+    tampered_entry = StoredPrivateKeyEntry({
+        "key_id": stored["key_id"],
+        "kek_salt": stored["kek_salt"],
+        "wrap_algorithm": stored["wrap_algorithm"],
+        "wrapped_key": bytes(tampered_wrapped),
+    })
+    path.write_bytes(tampered_entry.dump())
+
+    with pytest.raises(PrivateKeyUnwrapFailed):
+        kd.get_private_key(key_id)
