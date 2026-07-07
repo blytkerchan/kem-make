@@ -30,11 +30,8 @@ Covers:
       bug -- a naive `obj.dump() != encoded_data` compares asn1crypto's cached
       original bytes against themselves and is a silent no-op. These tests
       fail loudly if that regresses.
-  11. Cross-validation against the independently-authored kem-make.asn1
-      schema, compiled with asn1tools, confirming both describe the same
-      wire format for types that don't require open-type registration.
 
-Run with: pytest test_kem_make.py -v
+Run with: pytest test_bottom.py -v
 """
 
 import uuid
