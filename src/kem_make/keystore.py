@@ -52,10 +52,15 @@ need to be revisited.
 
 Public keys are never encrypted -- there is nothing to protect: anyone
 who has the public key is supposed to have it. What they DO get is
-strong integrity motivation to leave alone: swapping a stored public key
-for an attacker's own would cause anything encrypting to "Bob" to
-actually encrypt to the attacker. This module does not currently sign or
-MAC public key entries against tampering; see "Known limitations" below.
+integrity protection: each StoredPublicKeyEntry is HMAC-SHA256-protected
+using a per-entry MAC key derived the same way as private-key KEKs
+(HKDF from the master key, fresh random salt, domain-separation label),
+with the entry's own filename bound into the derivation info. That last
+part specifically catches an attacker swapping two validly-MAC'd entries
+between each other's filenames -- both entries individually still verify
+under a filename-blind MAC, but not once the filename is part of what's
+authenticated. See KeyDirectory._mac_public_key_data /
+_verify_and_get_data, and test_keystore.py's swap-attack test.
 
 Avoiding repeat hashing
 -----------------------
@@ -116,8 +121,6 @@ Side-channel and hygiene notes
 Known limitations (not addressed here; flagging rather than silently
 omitting)
 --------------------------------------------------------------------
-- Public key entries are not integrity-protected against on-disk
-  tampering by someone with filesystem write access (see above).
 - No key-directory-wide locking: concurrent writers (e.g. two processes
   adding keys at once) can race; atomic writes prevent corruption of any
   single file, but not lost updates to alt_index.der specifically, since
@@ -158,10 +161,13 @@ from cryptography.hazmat.primitives.keywrap import (
 from .bottom import KemPublicKey, KeyId, _require_der
 
 MASTER_KEY_LEN = 32          # 256-bit master key from PBKDF2
-KEK_LEN = 32                 # 256-bit per-key KEK from HKDF, for AES-256-GCM
+KEK_LEN = 32                 # 256-bit per-key KEK from HKDF, for AES-256 Key Wrap
 KDF_SALT_LEN = 16            # 128 bits, NIST's stated minimum
 KEK_SALT_LEN = 16
 CHECK_TAG_LEN = 32            # HMAC-SHA256 output length
+MAC_KEY_LEN = 32              # 256-bit per-entry MAC key from HKDF, for HMAC-SHA256
+MAC_SALT_LEN = 16
+MAC_TAG_LEN = 32               # HMAC-SHA256 output length
 
 # OWASP's current cited minimum for PBKDF2-HMAC-SHA256 (2026 sources).
 # Chosen for FIPS alignment with the rest of this project; Argon2id is
@@ -172,6 +178,7 @@ DEFAULT_PBKDF2_ITERATIONS = 600_000
 _DOMAIN_KEK = b"kem-make-keystore-kek-v1"
 _DOMAIN_CHECK = b"kem-make-keystore-check-v1"
 _CHECK_VALUE = b"kem-make-keystore-checkvalue-v1"
+_DOMAIN_PUBLIC_KEY_MAC = b"kem-make-keystore-pubkey-mac-v1"
 
 _WRAP_ALGORITHM_OID = "2.16.840.1.101.3.4.1.48"  # id-aes256-wrap-pad, RFC 5649
 
@@ -207,6 +214,13 @@ class PrivateKeyUnwrapFailed(KeyDirectoryError):
     """Raised when AES-KW unwrap fails integrity verification -- either
     the stored entry was tampered with, or (should not happen once
     open() has already verified the passphrase) the wrong KEK was used."""
+    pass
+
+
+class PublicKeyIntegrityError(KeyDirectoryError):
+    """Raised when a stored public key entry's MAC does not verify --
+    the entry was edited, replaced, or swapped with a different entry's
+    file on disk since it was written."""
     pass
 
 
@@ -261,6 +275,14 @@ def _derive_kek(master_key: bytes, salt: bytes, key_identity: bytes) -> bytearra
     return bytearray(hkdf.derive(bytes(master_key)))
 
 
+def _derive_public_key_mac_key(master_key: bytes, salt: bytes, hex_id: str) -> bytearray:
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(), length=MAC_KEY_LEN, salt=salt,
+        info=_DOMAIN_PUBLIC_KEY_MAC + hex_id.encode("ascii"),
+    )
+    return bytearray(hkdf.derive(bytes(master_key)))
+
+
 def _derive_check_tag(master_key: bytes, header_salt: bytes) -> bytes:
     hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=header_salt, info=_DOMAIN_CHECK)
     check_key = bytearray(hkdf.derive(bytes(master_key)))
@@ -293,10 +315,25 @@ class KeystoreHeader(Sequence):
         return obj
 
 
-class StoredPublicKeyEntry(Sequence):
+class PublicKeyEntryData(Sequence):
     _fields = [
         ("public_key", KemPublicKey),
         ("key_ids", KeyIdList),
+    ]
+
+
+class StoredPublicKeyEntry(Sequence):
+    # data is HMAC-SHA256-protected (see KeyDirectory._mac_public_key_data)
+    # so that swapping, editing, or replacing a public key entry on disk
+    # is detected rather than silently trusted. The MAC key is derived
+    # per-entry via HKDF from the master key, with a fresh random salt and
+    # an info field that binds in the entry's own filename -- the latter
+    # specifically so that swapping two validly-MAC'd entries between
+    # each other's filenames is also caught, not just editing one in place.
+    _fields = [
+        ("data", PublicKeyEntryData),
+        ("mac_salt", OctetString),
+        ("mac_tag", OctetString),
     ]
 
     @classmethod
@@ -429,6 +466,36 @@ class KeyDirectory:
     def _primary_key_id(self, public_key: KemPublicKey) -> KeyId:
         return KeyId.build(public_key, digest="sha256")
 
+    # -- public key integrity (MAC) -----------------------------------------
+
+    def _mac_public_key_data(self, data: "PublicKeyEntryData", salt: bytes, hex_id: str) -> bytes:
+        mac_key = _derive_public_key_mac_key(bytes(self._master_key), salt, hex_id)
+        try:
+            # force=True: must MAC the canonical re-derived DER, not
+            # whatever bytes happen to be cached on `data` -- otherwise a
+            # verify computed from a freshly-built PublicKeyEntryData
+            # could disagree with one computed after a load() round trip
+            # for reasons that have nothing to do with tampering.
+            return hmac.new(bytes(mac_key), data.dump(force=True), "sha256").digest()
+        finally:
+            _zero(mac_key)
+
+    def _build_stored_public_key_entry(self, data: "PublicKeyEntryData", hex_id: str) -> "StoredPublicKeyEntry":
+        salt = os.urandom(MAC_SALT_LEN)
+        tag = self._mac_public_key_data(data, salt, hex_id)
+        return StoredPublicKeyEntry({"data": data, "mac_salt": salt, "mac_tag": tag})
+
+    def _verify_and_get_data(self, stored: "StoredPublicKeyEntry", hex_id: str) -> "PublicKeyEntryData":
+        expected_tag = self._mac_public_key_data(stored["data"], stored["mac_salt"].native, hex_id)
+        actual_tag = stored["mac_tag"].native
+        if not hmac.compare_digest(actual_tag, expected_tag):
+            raise PublicKeyIntegrityError(
+                f"public key entry {hex_id} failed integrity verification "
+                f"(edited, replaced, or swapped with a different entry's "
+                f"file since it was written)"
+            )
+        return stored["data"]
+
     # -- public keys -------------------------------------------------------
 
     def add_public_key(self, public_key: KemPublicKey) -> KeyId:
@@ -438,31 +505,36 @@ class KeyDirectory:
         if path.exists():
             raise DuplicateKey(f"public key {hex_id} is already present")
 
-        entry = StoredPublicKeyEntry({
+        data = PublicKeyEntryData({
             "public_key": public_key,
             "key_ids": KeyIdList([primary]),
         })
+        entry = self._build_stored_public_key_entry(data, hex_id)
         _atomic_write(path, entry.dump(), 0o644)
         return primary
 
     def get_public_key(self, key_id: KeyId) -> KemPublicKey:
-        entry = self._load_public_entry_by_key_id(key_id)
-        return entry["public_key"]
+        data = self._load_public_entry_by_key_id(key_id)
+        return data["public_key"]
 
-    def _load_public_entry_by_key_id(self, key_id: KeyId) -> StoredPublicKeyEntry:
+    def _load_public_entry_by_key_id(self, key_id: KeyId) -> "PublicKeyEntryData":
+        """Loads, MAC-verifies, and returns the PublicKeyEntryData for the
+        given KeyId. Raises PublicKeyIntegrityError if the stored entry's
+        MAC does not verify -- callers never see unverified data."""
         hex_id = self._hex_of(key_id)
         digest_oid = key_id["hash_algorithm"]["algorithm"].dotted
 
         # Fast path: this IS the primary (SHA-256) KeyId -- direct filename hit.
         path = self._public_path(hex_id)
         if path.exists():
-            entry = StoredPublicKeyEntry.load(path.read_bytes())
+            stored = StoredPublicKeyEntry.load(path.read_bytes())
+            data = self._verify_and_get_data(stored, hex_id)
             if any(
                 kid["hash_algorithm"]["algorithm"].dotted == digest_oid
                 and _key_hash_equal(kid["key_hash"].native, key_id["key_hash"].native)
-                for kid in entry["key_ids"]
+                for kid in data["key_ids"]
             ):
-                return entry
+                return data
             # Same filename coincidentally, but not actually a match for a
             # non-default digest -- fall through to the alt index.
 
@@ -472,7 +544,8 @@ class KeyDirectory:
         if primary_hex is not None:
             alt_path = self._public_path(primary_hex)
             if alt_path.exists():
-                return StoredPublicKeyEntry.load(alt_path.read_bytes())
+                stored = StoredPublicKeyEntry.load(alt_path.read_bytes())
+                return self._verify_and_get_data(stored, primary_hex)
 
         raise KeyNotFound(f"no public key found for the given KeyId ({hex_id})")
 
@@ -481,19 +554,20 @@ class KeyDirectory:
         persisting it only if it isn't already cached on that key's entry.
         Never recomputes a digest that's already been cached for this key."""
         if isinstance(public_key_or_key_id, KeyId):
-            entry = self._load_public_entry_by_key_id(public_key_or_key_id)
+            data = self._load_public_entry_by_key_id(public_key_or_key_id)
         else:
-            entry = self._load_public_entry_by_key_id(self._primary_key_id(public_key_or_key_id))
+            data = self._load_public_entry_by_key_id(self._primary_key_id(public_key_or_key_id))
 
-        for kid in entry["key_ids"]:
+        for kid in data["key_ids"]:
             if kid["hash_algorithm"]["algorithm"].dotted == _digest_oid(digest):
                 return kid
 
-        new_kid = KeyId.build(entry["public_key"], digest=digest)
-        updated_ids = list(entry["key_ids"]) + [new_kid]
-        entry["key_ids"] = KeyIdList(updated_ids)
+        new_kid = KeyId.build(data["public_key"], digest=digest)
+        updated_ids = list(data["key_ids"]) + [new_kid]
+        data["key_ids"] = KeyIdList(updated_ids)
 
-        primary_hex = self._hex_of(entry["key_ids"][0])
+        primary_hex = self._hex_of(data["key_ids"][0])
+        entry = self._build_stored_public_key_entry(data, primary_hex)
         _atomic_write(self._public_path(primary_hex), entry.dump(), 0o644)
         self._alt_index_add(new_kid, primary_hex)
         return new_kid

@@ -521,3 +521,146 @@ def test_tampered_wrapped_key_is_rejected(tmp_path):
 
     with pytest.raises(PrivateKeyUnwrapFailed):
         kd.get_private_key(key_id)
+
+
+# ---------------------------------------------------------------------------
+# 15. Public key entries are MAC-protected against on-disk tampering
+# ---------------------------------------------------------------------------
+
+def test_public_key_round_trip_still_works(tmp_path):
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+    assert kd.get_public_key(key_id).dump() == pk.dump()
+
+
+def test_tampered_public_key_bytes_detected(tmp_path):
+    from kem_make.keystore import PublicKeyIntegrityError, StoredPublicKeyEntry, PublicKeyEntryData
+
+    pk = _pk()
+    other_pk = _pk(fill=b"\x99")
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+
+    path = kd._public_path(kd._hex_of(key_id))
+    stored = StoredPublicKeyEntry.load(path.read_bytes())
+
+    # Swap in a different public key but keep the original (now-mismatched)
+    # MAC salt/tag -- simulates an attacker editing the file directly.
+    tampered_data = PublicKeyEntryData({
+        "public_key": other_pk,
+        "key_ids": stored["data"]["key_ids"],
+    })
+    tampered = StoredPublicKeyEntry({
+        "data": tampered_data,
+        "mac_salt": stored["mac_salt"],
+        "mac_tag": stored["mac_tag"],
+    })
+    path.write_bytes(tampered.dump())
+
+    with pytest.raises(PublicKeyIntegrityError):
+        kd.get_public_key(key_id)
+
+
+def test_tampered_mac_tag_detected(tmp_path):
+    from kem_make.keystore import PublicKeyIntegrityError, StoredPublicKeyEntry
+
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+
+    path = kd._public_path(kd._hex_of(key_id))
+    stored = StoredPublicKeyEntry.load(path.read_bytes())
+    bad_tag = bytearray(stored["mac_tag"].native)
+    bad_tag[0] ^= 0xFF
+
+    tampered = StoredPublicKeyEntry({
+        "data": stored["data"],
+        "mac_salt": stored["mac_salt"],
+        "mac_tag": bytes(bad_tag),
+    })
+    path.write_bytes(tampered.dump())
+
+    with pytest.raises(PublicKeyIntegrityError):
+        kd.get_public_key(key_id)
+
+
+def test_swapping_two_entries_between_filenames_is_detected(tmp_path):
+    # Both files individually have a valid MAC for their ORIGINAL
+    # filename/identity -- if the MAC didn't bind the filename in, this
+    # swap would go undetected even though it's a real tampering attack
+    # (an attacker who can write files can rename/swap them).
+    from kem_make.keystore import PublicKeyIntegrityError
+
+    pk1 = _pk(fill=b"\x11")
+    pk2 = _pk(fill=b"\x22")
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    kid1 = kd.add_public_key(pk1)
+    kid2 = kd.add_public_key(pk2)
+
+    path1 = kd._public_path(kd._hex_of(kid1))
+    path2 = kd._public_path(kd._hex_of(kid2))
+    bytes1 = path1.read_bytes()
+    bytes2 = path2.read_bytes()
+
+    # Swap the file *contents* between the two filenames.
+    path1.write_bytes(bytes2)
+    path2.write_bytes(bytes1)
+
+    with pytest.raises(PublicKeyIntegrityError):
+        kd.get_public_key(kid1)
+    with pytest.raises(PublicKeyIntegrityError):
+        kd.get_public_key(kid2)
+
+
+def test_key_id_for_rewrite_still_verifies_after_mac_refresh(tmp_path):
+    # key_id_for() rewrites the entry (new key_ids list -> new MAC). This
+    # confirms the freshly rewritten entry still verifies correctly, not
+    # just the originally-written one.
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+    kd.key_id_for(key_id, digest="sha384")
+
+    # Reload from scratch (new KeyDirectory.open, not the same in-memory object)
+    kd.close()
+    kd2 = KeyDirectory.open(tmp_path / "kd", b"pass")
+    assert kd2.get_public_key(key_id).dump() == pk.dump()
+
+
+def test_public_key_mac_key_is_zeroed_after_use(tmp_path):
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+
+    from kem_make import keystore as keystore_module
+    real_zero = keystore_module._zero
+    zeroed_lengths = []
+
+    def spying_zero(buf):
+        zeroed_lengths.append(len(buf))
+        return real_zero(buf)
+
+    with mock.patch.object(keystore_module, "_zero", spying_zero):
+        key_id = kd.add_public_key(pk)
+        kd.get_public_key(key_id)
+
+    assert 32 in zeroed_lengths, "public key MAC key was not zeroed"
+
+
+def test_load_rejects_non_canonical_public_key_entry_structure(tmp_path):
+    # Same DER-canonicality guarantee as before, re-verified against the
+    # new nested (data + mac_salt + mac_tag) structure.
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+
+    path = kd._public_path(kd._hex_of(key_id))
+    der = path.read_bytes()
+    assert der[1] == 0x82
+    length_value = int.from_bytes(der[2:4], "big")
+    padded = b"\x00" + length_value.to_bytes(2, "big")
+    non_minimal = der[0:1] + bytes([0x83]) + padded + der[4:]
+    path.write_bytes(non_minimal)
+
+    with pytest.raises(NonCanonicalEncoding):
+        kd.get_public_key(key_id)

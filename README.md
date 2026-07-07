@@ -262,9 +262,12 @@ these):
   because no two entries ever share a KEK. Its own built-in integrity
   check catches tampering on unwrap, raising `PrivateKeyUnwrapFailed`.
 - **Public keys are never encrypted** — there's nothing to protect — but
-  they're also not currently integrity-protected against on-disk
-  tampering by someone with filesystem write access; see the module
-  docstring's "Known limitations".
+  they ARE integrity-protected: each entry carries an HMAC-SHA256 tag
+  from a per-entry MAC key (same HKDF-from-master-key pattern as the
+  private-key KEKs), with the entry's own filename bound into the
+  derivation. That last part specifically catches an attacker swapping
+  two validly-MAC'd entries between each other's filenames — confirmed
+  with a dedicated test, not just asserted.
 - **Key IDs are cached, never recomputed.** SHA-256 is the default and
   always present; a lookup under a different digest computes it once,
   persists it back onto that key's entry, and records it in
@@ -304,9 +307,8 @@ these):
   in `test_keystore.py` and checking it's rejected.
 
 Not yet built: no passphrase-change/re-encryption support, no
-keystore-wide locking against concurrent writers, no integrity protection
-for public key entries. All flagged explicitly in the module docstring
-rather than silently left out.
+keystore-wide locking against concurrent writers. Flagged explicitly in
+the module docstring rather than silently left out.
 
 ## Keeping the schema in sync
 
