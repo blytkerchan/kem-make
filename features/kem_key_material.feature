@@ -1,8 +1,9 @@
 # Security sub-layer for KEM-MAKE
 Feature: KEM public key and ciphertext validation
   As an implementer of KEM-MAKE
-  I want KemPublicKey and KemCiphertext to enforce ML-KEM algorithm
-  identifiers and fixed lengths on both the build and load paths
+  I want KemPublicKey and KemCiphertext to enforce permitted KEM algorithm
+  (currently ML-KEM-768 and ML-KEM-1024) identifiers and fixed lengths on
+  both the build and load paths
   So that malformed or spoofed key material is rejected before it reaches
   the KEM operations themselves
 
