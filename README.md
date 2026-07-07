@@ -118,7 +118,7 @@ two separate PDUs.
 
 ```python
 import uuid
-from kem_make import (
+from kem_make.bottom import (
     MakeMessage, SessionInitRequest, KemPublicKey, KemCiphertext, KeyId,
     AeadAlgorithmList,
 )
