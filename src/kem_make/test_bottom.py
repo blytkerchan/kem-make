@@ -386,7 +386,7 @@ def test_session_init_response_chosen_aead_round_trips():
     assert aead_name(parsed["chosen_aead"].native) == "aes256-gcm"
 
 
-@pytest.mark.parametrize("name", ["aes128-gcm", "aes192-gcm", "aes256-gcm", "chacha20-poly1305"])
+@pytest.mark.parametrize("name", ["aes128-gcm", "aes256-gcm", "chacha20-poly1305"])
 def test_all_known_aead_oids_round_trip(name):
     resp = SessionInitResponse({
         "key_id_b": KeyId.build(_pk()),

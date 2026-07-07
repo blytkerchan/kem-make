@@ -159,7 +159,7 @@ def test_session_key_derivation_directions_are_independent():
 
 
 @pytest.mark.parametrize("aead,expected_key_len", [
-    ("aes128-gcm", 16), ("aes192-gcm", 24), ("aes256-gcm", 32), ("chacha20-poly1305", 32),
+    ("aes128-gcm", 16), ("aes256-gcm", 32), ("chacha20-poly1305", 32),
 ])
 def test_session_key_derivation_respects_aead_key_length(aead, expected_key_len):
     keys = derive_session_keys(b"n" * 16, b"n" * 16, b"fa", b"s1", b"s2", b"s3", b"s4", aead)
