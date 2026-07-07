@@ -12,8 +12,10 @@ kem-make/
 ├── src/kem_make/
 │   ├── bottom.py              # message structures (the "bottom" layer) -- authoritative
 │   ├── crypto_backend.py      # runtime capability check for the crypto backend
+│   ├── keystore.py            # encrypted on-disk key directory (public + private keys)
 │   ├── test_bottom.py         # pytest suite for bottom.py
 │   ├── test_crypto_backend.py # pytest suite for crypto_backend.py
+│   ├── test_keystore.py       # pytest suite for keystore.py
 │   └── __init__.py            # re-exports the public API from bottom.py
 ├── kem-make.asn1              # hand-written ASN.1 schema; documentation only, see below
 ├── features/                  # Gherkin feature files (BDD)
@@ -211,6 +213,90 @@ assert parsed["payload"].name == "session_init_request"
   against what was actually offered — but that's a cross-PDU check the
   ASN.1 structure alone can't perform, since the request and response are
   separate objects; it belongs in the protocol implementation, not here.
+
+## Key directory (`keystore.py`)
+
+Encrypted on-disk storage for public and private keys, ahead of the
+top-layer protocol logic. It's a real filesystem directory, not one
+monolithic file — `<dir>/header.der`, `<dir>/public/<hex-sha256>.der`,
+`<dir>/private/<hex-sha256>.der>`, plus a lazily-created
+`<dir>/alt_index.der` — so adding or updating one key is a single atomic
+file write rather than a rewrite of the whole store.
+
+```python
+from kem_make.keystore import KeyDirectory
+
+kd = KeyDirectory.create("./keys", passphrase=b"correct horse battery staple")
+key_id = kd.add_public_key(pk)          # KemPublicKey from bottom.py
+kd.add_private_key(pk, private_key_bytes)
+
+pk_again = kd.get_public_key(key_id)
+priv_bytes = kd.get_private_key(key_id)  # bytearray; zero it yourself when done
+kd.close()
+
+# Later, in a new process:
+kd = KeyDirectory.open("./keys", passphrase=b"correct horse battery staple")
+```
+
+Key points (the module's own docstring has the full reasoning for all of
+these):
+
+- **Passphrase → master key** via PBKDF2-HMAC-SHA256, 600,000 iterations
+  by default (OWASP's current cited PBKDF2 minimum, chosen for FIPS
+  alignment with the rest of this project — Argon2id is OWASP's overall
+  top pick if FIPS compliance isn't actually a requirement here).
+- **Every private key gets its own KEK**, derived via HKDF-SHA256 from
+  the master key with a fresh random salt and an info field that binds in
+  a domain-separation label plus that key's own identity. Compromising
+  one key's KEK reveals nothing about any other key's, and a fresh salt
+  on every write means the KEK — and therefore the AES-256-GCM nonce
+  space it's used with — is never reused across writes.
+- **Public keys are never encrypted** — there's nothing to protect — but
+  they're also not currently integrity-protected against on-disk
+  tampering by someone with filesystem write access; see the module
+  docstring's "Known limitations".
+- **Key IDs are cached, never recomputed.** SHA-256 is the default and
+  always present; a lookup under a different digest computes it once,
+  persists it back onto that key's entry, and records it in
+  `alt_index.der` so a later direct lookup by that alternate hash is
+  still an index hit, not a rescan-and-rehash of every stored key.
+- **Wrong-passphrase detection and key lookups both use constant-time
+  comparison.** The passphrase check uses a dedicated HKDF-derived check
+  tag compared with `hmac.compare_digest`; `KeyId` lookups (both the
+  primary-entry check and the `alt_index.der` lookup) use a
+  `_key_hash_equal` helper wrapping the same function. A `KeyId`
+  identifies a *public* key and isn't secret the way a password or KEK
+  is, but this module treats every digest comparison as constant-time by
+  policy regardless of whether a specific case is provably exploitable —
+  it's free, and it means never having to re-argue "is this one actually
+  exploitable" in a future review. CPython's `bytes.__eq__` is a
+  short-circuiting comparison and not constant-time, so any comparison of
+  digest/hash material added to this module later must use one of these
+  helpers, not `==`.
+- **Best-effort zeroing** of the master key, per-key KEKs, and decrypted
+  private key bytes via an explicit `_zero()` helper — genuinely
+  best-effort, not a guarantee; CPython's allocator, GC, and any internal
+  copies made by `cryptography` itself are outside this module's control.
+  `get_private_key()` returns a `bytearray`, not `bytes`, specifically so
+  callers can zero it themselves once done.
+- **File permissions**: `0700` on the directory and its `public`/`private`
+  subdirectories, `0600` on the header and every private key file, `0644`
+  on public key files — enforced with `os.chmod` after creation, not left
+  to the process umask.
+- **All writes are atomic** — temp file in the same directory, then
+  `os.replace()` — so a crash mid-write can't leave a half-written file
+  that later parses as valid-but-wrong.
+- **DER-only, same as everywhere else in this project.** All four on-disk
+  record types (`KeystoreHeader`, `StoredPublicKeyEntry`,
+  `StoredPrivateKeyEntry`, `AltIndex`/`AltIndexEntry`) enforce DER
+  canonicality on `load()` via the same `_require_der` helper `bottom.py`
+  uses, confirmed by feeding each one a non-minimal-length BER encoding
+  in `test_keystore.py` and checking it's rejected.
+
+Not yet built: no passphrase-change/re-encryption support, no
+keystore-wide locking against concurrent writers, no integrity protection
+for public key entries. All flagged explicitly in the module docstring
+rather than silently left out.
 
 ## Keeping the schema in sync
 
