@@ -1,0 +1,343 @@
+-- ===================================================================
+-- Computer Security Objects Register CSOR
+-- Algorithm Registration
+-- ===================================================================
+-- The CSOR has allocated the following registration branch for cryptographic
+-- algorithm objects:
+
+NistAlgorithm {joint-iso-itu-t ds(5) module(1) selectedAttributeTypes(5) 7} 
+DEFINITIONS ::=
+BEGIN
+EXPORTS ALL
+
+nistAlgorithms OBJECT IDENTIFIER ::= {
+    joint-iso-ccitt(2) country(16) us(840) organization(1) gov(101) csor(3)
+    nistAlgorithm(4)
+}
+
+-- The CSOR only registers NIST-approved cryptographic algorithms. When an
+-- algorithm has already been externally assigned an object identifier (e.g.,
+-- for EdDSA digital signature), no new OID will be assigned in the CSOR arc.
+-- Information about externally assigned OIDs is provided toward the end of
+-- the page.
+
+-- ===================================================================
+-- ASN.1 Modules
+-- ===================================================================
+-- Often, cryptographic algorithm objects are defined for use with other ASN.1 types. In particular, OIDs intended for use in the ASN.1 type Algorithm may be associated with parameter definitions. This information is contained in an ASN.1 module. ASN.1 modules may be assigned OIDs to uniquely identify different versions of the ASN.1 constructs. The CSOR algorithm arc includes a sub arc for ASN.1 modules. To date, a single module has been registered to support AES project.
+
+csorModules OBJECT IDENTIFIER ::= { nistalgorithms modules (0) }
+aesModule1 OBJECT IDENTIFIER ::= { csorModules aes (1) }
+
+-- ===================================================================
+-- AES Registered Objects
+-- ===================================================================
+-- The following objects have been registered to support AES project.
+
+aes OBJECT IDENTIFIER ::= { nistAlgorithms 1 }
+
+-- 128-bit AES information OIDs
+id-aes128-ECB OBJECT IDENTIFIER ::= { aes 1 }
+id-aes128-CBC OBJECT IDENTIFIER ::= { aes 2 }
+id-aes128-OFB OBJECT IDENTIFIER ::= { aes 3 }
+id-aes128-CFB OBJECT IDENTIFIER ::= { aes 4 }
+id-aes128-wrap OBJECT IDENTIFIER ::= { aes 5 }
+id-aes128-GCM OBJECT IDENTIFIER ::= { aes 6 }
+id-aes128-CCM OBJECT IDENTIFIER ::= { aes 7 }
+id-aes128-wrap-pad OBJECT IDENTIFIER ::= { aes 8 }
+id-aes128-GMAC OBJECT IDENTIFIER ::= { aes 9 }
+
+-- 192-bit AES information OIDs
+id-aes192-ECB OBJECT IDENTIFIER ::= { aes 21 }
+id-aes192-CBC OBJECT IDENTIFIER ::= { aes 22 }
+id-aes192-OFB OBJECT IDENTIFIER ::= { aes 23 }
+id-aes192-CFB OBJECT IDENTIFIER ::= { aes 24 }
+id-aes192-wrap OBJECT IDENTIFIER ::= { aes 25 }
+id-aes192-GCM OBJECT IDENTIFIER ::= { aes 26 }
+id-aes192-CCM OBJECT IDENTIFIER ::= { aes 27 }
+id-aes192-wrap-pad OBJECT IDENTIFIER ::= { aes 28 }
+id-aes192-GMAC OBJECT IDENTIFIER ::= { aes 29 }
+
+-- 256-bit AES information OIDs
+id-aes256-ECB OBJECT IDENTIFIER ::= { aes 41 }
+id-aes256-CBC OBJECT IDENTIFIER ::= { aes 42 }
+id-aes256-OFB OBJECT IDENTIFIER ::= { aes 43 }
+id-aes256-CFB OBJECT IDENTIFIER ::= { aes 44 }
+id-aes256-wrap OBJECT IDENTIFIER ::= { aes 45 }
+id-aes256-GCM OBJECT IDENTIFIER ::= { aes 46 }
+id-aes256-CCM OBJECT IDENTIFIER ::= { aes 47 }
+id-aes256-wrap-pad OBJECT IDENTIFIER ::= { aes 48 }
+id-aes256-GMAC OBJECT IDENTIFIER ::= { aes 49 }
+
+-- The AES object identifiers may be used in the ASN.1 structured type
+-- Algorithm. The complete ASN.1 for these objects and any associated
+-- parameters is available in this ASN.1 module.
+
+-- ===================================================================
+-- Secure Hash Algorithms Registered Objects
+-- ===================================================================
+-- The following objects have been registered to support the deployment of
+-- secure hash algorithms.
+
+hashAlgs OBJECT IDENTIFIER ::= { nistAlgorithms 2 }
+
+-- SHA-1
+-- Externally assigned
+
+-- SHA-2 family
+id-sha256 OBJECT IDENTIFIER ::= { hashAlgs 1 }
+id-sha384 OBJECT IDENTIFIER ::= { hashAlgs 2 }
+id-sha512 OBJECT IDENTIFIER ::= { hashAlgs 3 }
+id-sha224 OBJECT IDENTIFIER ::= { hashAlgs 4 }
+id-sha512-224 OBJECT IDENTIFIER ::= { hashAlgs 5 }
+id-sha512-256 OBJECT IDENTIFIER ::= { hashAlgs 6 }
+
+-- SHA-3 family
+id-sha3-224 OBJECT IDENTIFIER ::= { hashAlgs 7 }
+id-sha3-256 OBJECT IDENTIFIER ::= { hashAlgs 8 }
+id-sha3-384 OBJECT IDENTIFIER ::= { hashAlgs 9 }
+id-sha3-512 OBJECT IDENTIFIER ::= { hashAlgs 10 }
+id-shake128 OBJECT IDENTIFIER ::= { hashAlgs 11 }
+id-shake256 OBJECT IDENTIFIER ::= { hashAlgs 12 }
+id-shake128-len OBJECT IDENTIFIER ::= { hashAlgs 17 }
+id-shake256-len OBJECT IDENTIFIER ::= { hashAlgs 18 }
+
+ShakeOutputLen ::= INTEGER -- Output length in bits
+
+-- The algorithm identifiers for id-shake128-len and id-shake256-len
+-- carry the parameter ShakeOutputLen.
+
+Alg-SHAKE128-LEN ALGORITHM ::= { OID id-shake128-len PARMS ShakeOutputLen }
+Alg-SHAKE256-LEN ALGORITHM ::= { OID id-shake256-len PARMS ShakeOutputLen }
+
+-- The other hash algorithm identifiers do not carry any parameters.
+
+id-KMACWithSHAKE128 OBJECT IDENTIFIER ::={hashAlgs 19 }
+
+KMACwithSHAKE128-params ::= SEQUENCE {
+    KMACOutputLength INTEGER DEFAULT 256, -- Output length in bits
+    customizationString OCTET STRING DEFAULT ''H
+}
+
+-- The algorithm identifiers for id-KMACWithSHAKE128 carry the parameter
+-- KMACwithSHAKE128-params.
+
+id-KMACWithSHAKE256 OBJECT IDENTIFIER ::={ hashAlgs 20 }
+
+KMACwithSHAKE256-params ::= SEQUENCE {
+    KMACOutputLength INTEGER DEFAULT 512, -- Output length in bits
+    customizationString OCTET STRING DEFAULT ''H
+}
+
+-- The algorithm identifiers for id-KMACWithSHAKE256 carry the parameter
+-- KMACwithSHAKE256-params.
+
+id-KMAC128 OBJECT IDENTIFIER ::= { hashAlgs 21 }      
+id-KMAC256 OBJECT IDENTIFIER ::= { hashAlgs 22 }    
+
+-- When the id-KMAC128 or the id-KMAC256 is used as part of an algorithm
+-- identifier, the parameters field MUST be absent if no customization
+-- string is used for S.  If any other value is used for S, then the
+-- parameters field MUST be present and contains the value of S, encoded as
+-- Customization.
+
+Customization::= OCTET STRING
+
+-- Any application/protocol specification which uses the id-KMAC128 or the
+-- id-KMAC256 shall specify the variables K, X and L to meet their
+-- requirements in Section 4.2 of NIST SP 800-185. 
+
+-- ===================================================================
+-- Keyed-Hash Message Authentication Code (HMAC) Algorithms Registered
+-- Objects
+-- ===================================================================
+-- The following objects have been registered to support the deployment of
+-- HMAC.
+
+-- HMAC with SHA-1
+-- Externally assigned
+
+-- HMAC with SHA-2 family
+-- Externally assigned
+
+-- HMAC with SHA-3 family
+id-hmacWithSHA3-224 OBJECT IDENTIFIER ::= { hashAlgs 13 }
+id-hmacWithSHA3-256 OBJECT IDENTIFIER ::= { hashAlgs 14 }
+id-hmacWithSHA3-384 OBJECT IDENTIFIER ::= { hashAlgs 15 }
+id-hmacWithSHA3-512 OBJECT IDENTIFIER ::= { hashAlgs 16 }
+
+-- ===================================================================
+-- Digital Signature Algorithms Registered Objects
+-- ===================================================================
+-- The following objects have been registered to support the deployment of
+-- digital signature algorithms.
+
+sigAlgs OBJECT IDENTIFIER ::= { nistAlgorithms 3 }
+
+-- DSA with SHA-1
+-- Externally assigned
+
+-- DSA with SHA-2 family
+id-dsa-with-sha224 OBJECT IDENTIFIER ::= { sigAlgs 1 }
+id-dsa-with-sha256 OBJECT IDENTIFIER ::= { sigAlgs 2 }
+id-dsa-with-sha384 OBJECT IDENTIFIER ::= { sigAlgs 3 }
+id-dsa-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 4 }
+
+-- DSA with SHA-3 family
+id-dsa-with-sha3-224 OBJECT IDENTIFIER ::= { sigAlgs 5 }
+id-dsa-with-sha3-256 OBJECT IDENTIFIER ::= { sigAlgs 6 }
+id-dsa-with-sha3-384 OBJECT IDENTIFIER ::= { sigAlgs 7 }
+id-dsa-with-sha3-512 OBJECT IDENTIFIER ::= { sigAlgs 8 }
+
+-- ECDSA with SHA-1
+-- Externally assigned
+
+-- ECDSA with SHA-2 family
+-- Externally assigned
+
+-- ECDSA with SHA-3 family
+id-ecdsa-with-sha3-224 OBJECT IDENTIFIER ::= { sigAlgs 9 }
+id-ecdsa-with-sha3-256 OBJECT IDENTIFIER ::= { sigAlgs 10 }
+id-ecdsa-with-sha3-384 OBJECT IDENTIFIER ::= { sigAlgs 11 }
+id-ecdsa-with-sha3-512 OBJECT IDENTIFIER ::= { sigAlgs 12 }
+-- id-ecdsa-with-shake128: Externally assigned
+-- id-ecdsa-with-shake256: Externally assigned
+
+-- EdDSA family
+-- Externally assigned
+
+-- ML-DSA
+-- The following objects are for use with "pure" ML-DSA public keys and
+-- signatures:
+id-ml-dsa-44 OBJECT IDENTIFIER ::= { sigAlgs 17 }
+id-ml-dsa-65 OBJECT IDENTIFIER ::= { sigAlgs 18 }
+id-ml-dsa-87 OBJECT IDENTIFIER ::= { sigAlgs 19 }
+
+-- The identifiers for ML-DSA do not carry any parameters. For signatures
+-- with these identifiers the context string is empty, unless an
+-- application-specific context string has been specified.
+
+-- The following objects are for use with "pre-hash" ML-DSA (HashML-DSA)
+-- signatures and the corresponding public keys, where the message is
+-- pre-hashed with SHA-512:
+id-hash-ml-dsa-44-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 32 }
+id-hash-ml-dsa-65-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 33 }
+id-hash-ml-dsa-87-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 34 }
+
+-- The identifiers for HashML-DSA do not carry any parameters. For signatures
+-- with these identifiers the context string is empty, unless an
+-- application-specific context string has been specified.
+
+-- RSA PKCS #1 v1.5 Signature with SHA-1
+-- Externally assigned
+
+-- RSA PKCS #1 v1.5 Signature with SHA-2 family
+-- Externally assigned
+
+-- RSA PKCS #1 v1.5 Signature with SHA-3 family
+id-rsassa-pkcs1-v1-5-with-sha3-224 OBJECT IDENTIFIER ::= { sigAlgs 13 }
+id-rsassa-pkcs1-v1-5-with-sha3-256 OBJECT IDENTIFIER ::= { sigAlgs 14 }
+id-rsassa-pkcs1-v1-5-with-sha3-384 OBJECT IDENTIFIER ::= { sigAlgs 15 }
+id-rsassa-pkcs1-v1-5-with-sha3-512 OBJECT IDENTIFIER ::= { sigAlgs 16 }
+
+-- RSASSA-PSS
+-- Externally assigned
+
+-- SLH-DSA
+-- The following objects are for use with "pure" SLH-DSA signatures and
+-- the corresponding public keys:
+
+id-slh-dsa-sha2-128s OBJECT IDENTIFIER ::= { sigAlgs 20 }
+id-slh-dsa-sha2-128f OBJECT IDENTIFIER ::= { sigAlgs 21 }
+id-slh-dsa-sha2-192s OBJECT IDENTIFIER ::= { sigAlgs 22 }
+id-slh-dsa-sha2-192f OBJECT IDENTIFIER ::= { sigAlgs 23 }
+id-slh-dsa-sha2-256s OBJECT IDENTIFIER ::= { sigAlgs 24 }
+id-slh-dsa-sha2-256f OBJECT IDENTIFIER ::= { sigAlgs 25 }
+id-slh-dsa-shake-128s OBJECT IDENTIFIER ::= { sigAlgs 26 }
+id-slh-dsa-shake-128f OBJECT IDENTIFIER ::= { sigAlgs 27 }
+id-slh-dsa-shake-192s OBJECT IDENTIFIER ::= { sigAlgs 28 }
+id-slh-dsa-shake-192f OBJECT IDENTIFIER ::= { sigAlgs 29 }
+id-slh-dsa-shake-256s OBJECT IDENTIFIER ::= { sigAlgs 30 }
+id-slh-dsa-shake-256f OBJECT IDENTIFIER ::= { sigAlgs 31 }
+
+-- The identifiers for SLH-DSA do not carry any parameters. For signatures
+-- with these identifiers the context string is empty, unless an
+-- application-specific context string has been specified.
+
+-- The following objects are for use with "pre-hash" SLH-DSA signatures
+-- and the corresponding public keys:
+
+id-hash-slh-dsa-sha2-128s-with-sha256 OBJECT IDENTIFIER ::= { sigAlgs 35 }
+id-hash-slh-dsa-sha2-128f-with-sha256 OBJECT IDENTIFIER ::= { sigAlgs 36 }
+id-hash-slh-dsa-sha2-192s-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 37 }
+id-hash-slh-dsa-sha2-192f-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 38 }
+id-hash-slh-dsa-sha2-256s-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 39 }
+id-hash-slh-dsa-sha2-256f-with-sha512 OBJECT IDENTIFIER ::= { sigAlgs 40 }
+id-hash-slh-dsa-shake-128s-with-shake128 OBJECT IDENTIFIER ::= { sigAlgs 41 }
+id-hash-slh-dsa-shake-128f-with-shake128 OBJECT IDENTIFIER ::= { sigAlgs 42 }
+id-hash-slh-dsa-shake-192s-with-shake256 OBJECT IDENTIFIER ::= { sigAlgs 43 }
+id-hash-slh-dsa-shake-192f-with-shake256 OBJECT IDENTIFIER ::= { sigAlgs 44 }
+id-hash-slh-dsa-shake-256s-with-shake256  OBJECT IDENTIFIER ::= { sigAlgs 45 }
+id-hash-slh-dsa-shake-256f-with-shake256 OBJECT IDENTIFIER ::= { sigAlgs 46 }
+
+-- The identifiers for the pre-hash version of SLH-DSA do not carry any
+-- parameters. For signatures with these identifiers the context string is
+-- empty, unless an application-specific context string has been specified.
+-- Pre-hashing is performed using the hash algorithm or XOF specified after
+-- "with" in the identifier string. When pre-hashing is performed using
+-- SHAKE128, the OID for SHAKE128 is id-shake128 ( { hashAlgs 11 } ) and the
+-- output length is 256 bits. When pre-hashing is performed using SHAKE256,
+-- the OID for SHAKE256 is id-shake256 ( { hashAlgs 12 } ) and the output
+-- length is 512 bits.
+
+-- ===================================================================
+-- Key-Establishment Mechanism Registered Objects
+-- ===================================================================
+-- The following objects have been registered to support the deployment of
+-- key-establishment mechanisms.
+
+kems OBJECT IDENTIFIER ::= { nistAlgorithms 4 }
+
+-- ML-KEM
+-- The following objects are for use with ML-KEM public keys and
+-- ciphertexts:
+
+id-alg-ml-kem-512 OBJECT IDENTIFIER ::= { kems 1 }
+id-alg-ml-kem-768 OBJECT IDENTIFIER ::= { kems 2 }
+id-alg-ml-kem-1024 OBJECT IDENTIFIER ::= { kems 3 }
+
+-- The identifiers for ML-KEM do not carry any parameters.
+
+-- ===================================================================
+-- Externally-assigned OIDs
+-- ===================================================================
+-- The following identifies the source where widely used ASN.1 object
+-- identifiers are assigned by external organizations for NIST-specified
+-- algorithms.
+--
+-- - SHA-1: IEEE P1363, also IETF RFC 3370
+--
+-- - HMAC with SHA-1: RFC 3370
+-- - HMAC with SHA-2 family: RFC 4231
+--
+-- - DSA with SHA-1: RFC 3279
+--
+-- - ECDSA with SHA-1: RFC 3279
+-- - ECDSA with SHA-2 family: RFC 5758
+-- - ECDSA with SHAKE128 and SHAKE256: RFC 8692
+--
+-- - EdDSA:  RFC 8410
+--
+-- - RSA PKCS #1 v1.5 Signature with SHA-1: RFC 3279
+-- - RSA PKCS #1 v1.5 Signature with SHA-2 family: RFC 4055
+-- - RSASSA-PSS Signature Family:
+--
+-- - The OIDs for RSASSA-PSS with SHAKE128 and SHAKE256 are specified in RFC
+--   8692. The OID for RSASSA-PSS with other hash functions is specified in
+--   RFC 4055.  When using the OID from RFC 4055, the OID for the specific
+--   hash function used is included in the algorithm parameters.
+
+-- Created May 24, 2016, Updated August 30, 2024
+-- Retrieved from https://csrc.nist.gov/projects/computer-security-objects-register/algorithm-registration on 2024-01-11
+
+END
