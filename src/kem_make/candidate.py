@@ -1,17 +1,17 @@
 """
 Bounded tracking of unauthenticated first-flight handshake candidates.
 
-The threat this exists for (see rationale.md for the full discussion):
-KEM encapsulation only needs a *public* key, so anyone who has Alice's and
-Bob's public keys -- which are on the wire in plaintext the moment a
-handshake starts -- can forge a structurally valid SessionInitResponse (or
-SessionInitRequest) under a given cid, without holding any private key at
-all. The forgery is only provably wrong once someone actually derives and
-confirms the session key. Until that confirmation, a peer holding a given
-cid may have more than one candidate reply in flight for it: the real
-one, and zero or more forged ones. Both this module and the party running
-it MUST treat every such candidate as equally unauthenticated until one of
-them produces cryptographic proof (a matching h_m, or a cM that decrypts
+The threat this exists for: KEM encapsulation only needs a *public* key,
+so anyone who has Alice's and Bob's public keys -- which are on the wire
+in plaintext the moment a handshake starts -- can forge a structurally
+valid SessionInitResponse (or SessionInitRequest) under a given cid,
+without holding any private key at all. The forgery is only provably
+wrong once someone actually derives and confirms the session key. Until
+that confirmation, a peer holding a given cid may have more than one
+candidate reply in flight for it: the real one, and zero or more forged
+ones. Both this module and the party running it MUST treat every such
+candidate as equally unauthenticated until one of them produces
+cryptographic proof (a matching h_m, or a cM that decrypts
 successfully).
 
 This module owns exactly the bookkeeping needed to survive that ambiguity
@@ -19,8 +19,15 @@ without becoming a resource-exhaustion vector itself:
   - a small cap on how many candidates a single cid may accumulate,
   - a coarser cap on the total number of candidates tracked at once,
   - promotion (confirm one candidate, discard its siblings for that cid),
-  - fixed-TTL expiry, swept on demand, with no per-candidate extension --
-    see rationale.md for why sliding TTL was considered and rejected.
+  - fixed-TTL expiry, swept on demand, with no per-candidate extension.
+    TTL is fixed rather than sliding deliberately: if a peer is seeing
+    retries of the same PDU, that means its own replies aren't reaching
+    the other side, and no amount of holding a candidate open longer
+    fixes a broken return path. Sliding would also weaken the DoS bound
+    it's meant to enforce -- an attacker who captured one legitimate
+    eliciting message could replay it indefinitely to keep a candidate
+    (forged or otherwise) alive forever for free, since a matching
+    duplicate costs nothing but a cache hit.
 
 This module does not itself do any cryptography, parse any PDU, or decide
 what "confirmed" means -- callers (SessionLayer, or whatever dispatcher
@@ -47,11 +54,11 @@ class CandidateStoreError(Exception):
 
 class CandidateLimitExceeded(CandidateStoreError):
     """Raised when adding a candidate would exceed the per-cid or global
-    cap. Callers should drop the eliciting message silently (see
-    rationale.md: no wire-level error message is sent for anything in
-    this threat class -- an attacker able to observe an error response
-    learns their forgery attempt was noticed, for no benefit to the
-    legitimate peer)."""
+    cap. Callers should drop the eliciting message silently -- no
+    wire-level error message is sent for anything in this threat class,
+    since an attacker able to observe an error response learns their
+    forgery attempt was noticed, for no benefit to the legitimate
+    peer."""
     pass
 
 
@@ -176,8 +183,8 @@ class CandidateStore:
         """Sweeps every candidate across every cid and drops anything past
         its (fixed, never-extended) expiry. Returns the number removed.
         Intended to be called from update()'s crank on every tick -- see
-        rationale.md for why TTL is fixed rather than refreshed on a
-        matching retry."""
+        the module docstring for why TTL is fixed rather than refreshed
+        on a matching retry."""
         removed_count = 0
         empty_cids = []
         for cid, candidates in self._by_cid.items():

@@ -8,8 +8,8 @@ Covers:
   4. Promotion discards every sibling for that cid, not just the winner.
   5. expire() removes only past-TTL candidates, and is a no-op otherwise.
   6. TTL is fixed at creation and is NOT extended by a matching duplicate
-     -- this is a deliberate design decision (see rationale.md), not an
-     oversight, so it's tested explicitly rather than left implicit.
+     -- this is a deliberate design decision, not an oversight, so it's
+     tested explicitly rather than left implicit.
   7. Candidates for different cids don't interfere with each other.
 
 Run with: pytest test_candidate.py -v
@@ -166,13 +166,13 @@ def test_expire_is_a_no_op_when_nothing_is_past_ttl():
 
 
 def test_ttl_is_fixed_and_not_extended_by_a_matching_duplicate():
-    # Deliberate design decision (see rationale.md): a run of legitimate
-    # retries proves the request path works and the response path
-    # doesn't, so extending the deadline on each match wouldn't help a
-    # genuinely broken return path, and would let an attacker who
-    # captured one eliciting message keep a candidate alive indefinitely
-    # by replaying it, weakening the TTL bound. match_or_none() must not
-    # mutate expires_at as a side effect of finding a match.
+    # Deliberate design decision: a run of legitimate retries proves the
+    # request path works and the response path doesn't, so extending the
+    # deadline on each match wouldn't help a genuinely broken return
+    # path, and would let an attacker who captured one eliciting message
+    # keep a candidate alive indefinitely by replaying it, weakening the
+    # TTL bound. match_or_none() must not mutate expires_at as a side
+    # effect of finding a match.
     store = CandidateStore(ttl_seconds=10.0)
     cid = _cid(1)
     candidate = store.add(cid, b"r1", b"s1", now=0.0)

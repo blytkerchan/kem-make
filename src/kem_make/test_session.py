@@ -17,8 +17,8 @@ Covers:
      drops the session, and a duplicate incoming PDU triggers a resend
      without re-running any handshake logic.
   6. Bob (responder) never retries -- his deadline is a pure TTL.
-  7. The Mallory scenario from rationale.md: a forged SessionInitResponse
-     (or SessionCompletionRequest) built with only public keys is
+  7. The Mallory scenario: a forged SessionInitResponse (or
+     SessionCompletionRequest) built with only public keys is
      structurally valid but fails cryptographic confirmation --
      HandshakeFailed, not a crash, not a false-positive success.
   8. Unknown claimed identity and no-mutual-AEAD are both rejected before
@@ -56,8 +56,8 @@ from kem_make.session import (
 class FakeKeyLookup:
     """Minimal stand-in for KeyDirectory, satisfying the KeyLookup Protocol
     structurally. Real integration against keystore.KeyDirectory is a
-    separate concern (see rationale.md) -- these tests are about the
-    session layer's own logic, not the key store's."""
+    separate concern -- these tests are about the session layer's own
+    logic, not the key store's."""
 
     def __init__(self):
         self._pub = {}

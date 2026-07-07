@@ -19,40 +19,38 @@ Deliberately modeled on push-in/pull-out/crank, not callbacks:
 update() is where every state transition, every crypto operation, every
 retry decision, and all TTL expiry happens. post_*() only enqueues;
 nothing it does is observable via poll_*()/get_*() until the next
-update() call. This split is deliberate (see rationale.md): a callback
-firing synchronously from inside post_pdu() would put the layer's own
-internals on the call stack at a point where the caller might reenter it,
-and a pure state machine with no callbacks is far easier to drive from a
-test than one that expects a handler object to be watching.
+update() call. This split is deliberate: a callback firing synchronously
+from inside post_pdu() would put the layer's own internals on the call
+stack at a point where the caller might reenter it, and a pure state
+machine with no callbacks is far easier to drive from a test than one
+that expects a handler object to be watching.
 
 This class represents ONE handshake attempt for ONE cid -- either the
 initiator's (Alice's) side or the responder's (Bob's) side of it, chosen
-at construction via `role`. It does NOT implement the multi-candidate
-arbitration discussed at length in rationale.md (the DoS-mitigation
-concern: an unauthenticated first-flight PDU for a given cid may have
-more than one plausible responder in flight, since forging one requires
-only public keys). That arbitration is the job of an outer dispatcher,
-sketched in rationale.md, that uses candidate.py's CandidateStore to
-bound how many concurrent SessionLayer instances may exist for one cid
-before any of them is cryptographically confirmed, and promotes exactly
-one (discarding its siblings) the moment proof arrives. This class is
-the thing that gets constructed once per candidate, and once per
-confirmed session thereafter.
+at construction via `role`. It does NOT implement multi-candidate
+arbitration (the DoS-mitigation concern: an unauthenticated first-flight
+PDU for a given cid may have more than one plausible responder in
+flight, since forging one requires only public keys). That arbitration
+is the job of an outer dispatcher that uses candidate.py's
+CandidateStore to bound how many concurrent SessionLayer instances may
+exist for one cid before any of them is cryptographically confirmed, and
+promotes exactly one (discarding its siblings) the moment proof arrives.
+This class is the thing that gets constructed once per candidate, and
+once per confirmed session thereafter.
 
 Retry semantics
 ----------------
 Retries resend the EXACT bytes already sent for the current state, never
-regenerated ones -- see rationale.md for why this is a correctness
-requirement, not a style preference (regenerating ephemeral keys on
-retry would produce a structurally valid but cryptographically different
-message, silently diverging from whatever the peer already derived from
-the original). Both `_last_received` and `_last_sent` are single slots,
-overwritten on every successful state transition, not a history: they
-represent "the pair relevant to the step currently being waited on," per
-an explicit design decision, not an oversight.
+regenerated ones. This is a correctness requirement, not a style
+preference: regenerating ephemeral keys on retry would produce a
+structurally valid but cryptographically different message, silently
+diverging from whatever the peer already derived from the original.
+Both `_last_received` and `_last_sent` are single slots, overwritten on
+every successful state transition, not a history: they represent "the
+pair relevant to the step currently being waited on," per an explicit
+design decision, not an oversight.
 
-Threat-model notes carried over from rationale.md, restated briefly here
-because they directly shape what this class does on failure:
+Threat-model notes that directly shape what this class does on failure:
   - KEM encapsulation needs only a public key, so a peer's identity is
     NOT authenticated until h_m matches (initiator side) or c_m/`m`
     successfully decrypts (responder side, one step earlier). Every
@@ -147,11 +145,11 @@ def _decapsulate(private_seed: bytes, level: int, ciphertext: KemCiphertext) -> 
 # k <- H(nA|nB, fA, s1|s2|s3|s4) per main.pdf, extended (per bottom.py's own
 # existing Message-layer commentary) into two INDEPENDENT directional
 # keys+IVs rather than one shared key: same HKDF salt/IKM, distinct info
-# labels per direction. See rationale.md for the full derivation and why
-# per-message nonces are IV-XOR-seq (the same construction TLS 1.3 uses
-# for its per-record nonce) rather than randomly generated per message --
-# random nonces would need their own uniqueness bookkeeping this project
-# already does better with seq, which every Message already carries.
+# labels per direction. Per-message nonces are IV-XOR-seq (the same
+# construction TLS 1.3 uses for its per-record nonce) rather than
+# randomly generated per message -- random nonces would need their own
+# uniqueness bookkeeping this project already does better with seq,
+# which every Message already carries.
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -272,8 +270,8 @@ class KeyLookup(Protocol):
 class SessionConfig:
     max_retries: int = 2                     # 2 retries => 3 total attempts
     retry_interval_seconds: float = 5.0
-    ttl_seconds: float = 60.0                  # see rationale.md: generous margin over
-                                                # the retry span, since peers don't
+    ttl_seconds: float = 60.0                  # generous margin over the retry
+                                                # span, since peers don't
                                                 # coordinate timeout settings
     kem_level: int = 768
     acceptable_aeads: Tuple[str, ...] = ("aes256-gcm", "chacha20-poly1305")
@@ -536,7 +534,7 @@ class SessionLayer:
         self._last_received = der_bytes
         self._last_sent = out_der
         self._attempt_count = 0
-        self._deadline = now + self.config.ttl_seconds  # responder: TTL only, no retry -- see rationale.md
+        self._deadline = now + self.config.ttl_seconds  # responder: TTL only, no retry
         self.state = SessionState.EXPECT_SESSION_COMPLETION_REQUEST
         self._outgoing_pdus.append(out_der)
 
@@ -559,10 +557,10 @@ class SessionLayer:
                 ciphertext=req["c_m"].native, associated_data=self.cid.bytes,
             )
         except Exception as e:
-            # This is precisely the "forged candidate" signal from
-            # rationale.md's threat model: a structurally valid message
-            # under a key that doesn't actually correspond. Never send
-            # anything back for this.
+            # This is precisely the "forged candidate" case from the
+            # threat model: a structurally valid message under a key
+            # that doesn't actually correspond. Never send anything back
+            # for this.
             raise HandshakeFailed("c_m did not decrypt -- unauthenticated candidate") from e
 
         if plaintext:
@@ -706,9 +704,8 @@ class SessionLayer:
             key, iv = self._session_keys.key_a2b, self._session_keys.iv_a2b
 
         if seq != expected_seq:
-            # Strict monotonic sequencing only -- not a full replay window.
-            # See rationale.md: flagged as an extension point, not solved
-            # here.
+            # Strict monotonic sequencing only -- not a full replay
+            # window. Flagged as an extension point, not solved here.
             raise HandshakeFailed(f"unexpected seq {seq}, expected {expected_seq}")
 
         plaintext = _decrypt(
