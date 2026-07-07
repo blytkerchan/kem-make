@@ -8,8 +8,10 @@ Covers:
   4. KeyId: hash is over the whole KemPublicKey DER encoding, not raw key bytes.
   5. cid (correlation id) length validation.
   6. version DEFAULT(0) is omitted from the DER encoding.
-  7. Optional "m" field on SessionCompletionRequest / SessionCompletionResponse:
-     absent vs. present.
+  7. Optional "m" field on SessionCompletionResponse only: absent vs.
+     present. SessionCompletionRequest has no such field -- c_m already
+     carries the false-start payload, so a second field would duplicate
+     it; a regression test confirms it stays that way.
   8. AEAD negotiation: acceptable_aeads (SessionInitRequest, a list of bare
      OIDs, forward-compatible with unrecognized algorithms) and chosen_aead
      (SessionInitResponse, a single bare OID).
@@ -252,23 +254,17 @@ def test_version_default_is_omitted_from_der():
 
 
 # ---------------------------------------------------------------------------
-# 7. Optional "m" field on SessionCompletionRequest / SessionCompletionResponse
+# 7. Optional "m" field on SessionCompletionResponse only
+#
+# SessionCompletionRequest has no separate "m" field: c_m IS the
+# false-start payload already, so a second field would duplicate it.
 # ---------------------------------------------------------------------------
 
-def test_session_completion_request_m_absent():
-    ct4 = _ct()
-    req = SessionCompletionRequest({"c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16})
-    parsed = SessionCompletionRequest.load(req.dump())
-    assert parsed["m"].native is None
-
-
-def test_session_completion_request_m_present():
-    ct4 = _ct()
-    req = SessionCompletionRequest({
-        "c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16, "m": b"early",
-    })
-    parsed = SessionCompletionRequest.load(req.dump())
-    assert parsed["m"].native == b"early"
+def test_session_completion_request_has_no_m_field():
+    # Regression test: c_m already carries the false-start payload, so a
+    # separate "m" field here would be redundant. Fails loudly if one is
+    # ever reintroduced without updating this decision.
+    assert [f[0] for f in SessionCompletionRequest._fields] == ["c_m", "ct4", "n_a"]
 
 
 def test_session_completion_response_m_absent():
@@ -283,12 +279,9 @@ def test_session_completion_response_m_present():
     assert parsed["m"].native == b"early-response-data"
 
 
-def test_m_absent_is_shorter_on_wire():
-    ct4 = _ct()
-    without = SessionCompletionRequest({"c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16})
-    with_m = SessionCompletionRequest({
-        "c_m": b"c" * 16, "ct4": ct4, "n_a": b"n" * 16, "m": b"x",
-    })
+def test_session_completion_response_m_absent_is_shorter_on_wire():
+    without = SessionCompletionResponse({"h_m": b"h" * 32})
+    with_m = SessionCompletionResponse({"h_m": b"h" * 32, "m": b"x"})
     assert len(without.dump()) < len(with_m.dump())
 
 

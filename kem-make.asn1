@@ -118,13 +118,20 @@ SessionInitResponse ::= SEQUENCE {
     chosenAead  OBJECT IDENTIFIER
 }
 
+-- No separate optional "m" field here (unlike SessionCompletionResponse):
+-- cM IS the false-start payload, the encrypted application message
+-- Alice sends riding along with handshake completion, before Bob has
+-- acknowledged. A second, distinct "m" field would duplicate exactly
+-- what cM already carries.
 SessionCompletionRequest ::= SEQUENCE {
     cM          OCTET STRING,
     ct4         KemCiphertext,
-    nA          OCTET STRING,
-    m       [0] OCTET STRING OPTIONAL
+    nA          OCTET STRING
 }
 
+-- Unlike SessionCompletionRequest, hM is only an acknowledgment hash, not
+-- a payload; an optional "m" here genuinely adds a false-start reply
+-- payload rather than duplicating an existing field.
 SessionCompletionResponse ::= SEQUENCE {
     hM          OCTET STRING,
     m       [0] OCTET STRING OPTIONAL

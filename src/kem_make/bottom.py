@@ -275,15 +275,22 @@ class SessionInitResponse(Sequence):
 
 
 class SessionCompletionRequest(Sequence):
+    # No separate optional "m" field here (unlike SessionCompletionResponse):
+    # c_m IS the false-start payload -- the encrypted application message
+    # Alice sends riding along with handshake completion, before Bob has
+    # acknowledged. Adding a second, distinct "m" field would duplicate
+    # exactly what c_m already carries.
     _fields = [
         ("c_m", OctetString),
         ("ct4", KemCiphertext),
         ("n_a", OctetString),
-        ("m", OctetString, {"implicit": 0, "optional": True}),
     ]
 
 
 class SessionCompletionResponse(Sequence):
+    # Unlike SessionCompletionRequest, h_m is only an acknowledgment hash,
+    # not a payload -- so an optional "m" here genuinely adds a false-start
+    # reply payload rather than duplicating an existing field.
     _fields = [
         ("h_m", OctetString),
         ("m", OctetString, {"implicit": 0, "optional": True}),

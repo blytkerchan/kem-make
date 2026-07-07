@@ -62,15 +62,21 @@ MakeMessage
 └── payload   (CHOICE, tagged [0]-[4])
     ├── [0] SessionInitRequest           { ct1, keyIdB, pkAStar, keyIdA, acceptableAeads }
     ├── [1] SessionInitResponse          { keyIdB, pkBStar, ct2, ct3, nB, chosenAead }
-    ├── [2] SessionCompletionRequest     { cM, ct4, nA, m? }
+    ├── [2] SessionCompletionRequest     { cM, ct4, nA }
     ├── [3] SessionCompletionResponse    { hM, m? }
     └── [4] Message                      { seq, m }
 ```
 
-`m` on `SessionCompletionRequest`/`SessionCompletionResponse` is
-`OCTET STRING OPTIONAL` (tagged `[0]`) — present only when the early-data
-optimization is used, otherwise absent from the wire entirely (not an
-empty string).
+`cM` on `SessionCompletionRequest` already *is* the false-start payload —
+the encrypted application message Alice sends riding along with handshake
+completion, before Bob has acknowledged. There's deliberately no separate
+`m` field there; one would just duplicate what `cM` already carries.
+
+`m` on `SessionCompletionResponse` is `OCTET STRING OPTIONAL` (tagged
+`[0]`) — present only when Bob's own early-data optimization is used,
+otherwise absent from the wire entirely (not an empty string). This one
+does earn its keep: `hM` is only an acknowledgment hash, not a payload, so
+`m` is the only place a false-start reply from Bob could go.
 
 `Message` is the post-handshake application-data PDU: `seq` is a
 per-direction sequence number, `m` is the opaque payload. **`seq` is

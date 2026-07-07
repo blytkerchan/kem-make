@@ -2,9 +2,12 @@
 Feature: KEM-MAKE handshake messages
   As an implementer of KEM-MAKE
   I want the four handshake PDUs to carry the fields the protocol defines,
-  with the optional early-data field ("m") absent from the wire when unused
+  with SessionCompletionResponse's optional early-data field ("m") absent
+  from the wire when unused
   So that peers who don't use the early-data optimization pay no encoding
-  cost for it, and peers who do use it can distinguish "absent" from "empty"
+  cost for it, peers who do use it can distinguish "absent" from "empty",
+  and SessionCompletionRequest's own false-start payload (cM) isn't
+  duplicated by a second field carrying the same thing
 
   Background:
     Given a valid ML-KEM-768 KemCiphertext "ct"
@@ -54,24 +57,18 @@ Feature: KEM-MAKE handshake messages
     When I attempt to build a SessionInitResponse with key_id_b="kid", pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB" and no chosen_aead
     Then encoding the SessionInitResponse fails
 
-  Scenario: A session-completion-request without early data omits the "m" field from the wire
+  Scenario: A session-completion-request's cM is itself the false-start payload
     Given a nonce "nA" of 16 bytes
     And an application ciphertext "cM" of 16 bytes
-    When I build a SessionCompletionRequest with c_m="cM", ct4="ct", n_a="nA" and no "m"
-    Then the encoded SessionCompletionRequest, when loaded, has an absent "m" field
-    And the encoded SessionCompletionRequest is shorter than the same message with "m" present
-
-  Scenario: A session-completion-request with early data carries "m" explicitly
-    Given a nonce "nA" of 16 bytes
-    And an application ciphertext "cM" of 16 bytes
-    And early-data bytes "m_data"
-    When I build a SessionCompletionRequest with c_m="cM", ct4="ct", n_a="nA" and m="m_data"
-    Then the encoded SessionCompletionRequest, when loaded, has "m" equal to "m_data"
+    When I build a SessionCompletionRequest with c_m="cM", ct4="ct", n_a="nA"
+    Then the SessionCompletionRequest has exactly the fields "c_m", "ct4", and "n_a"
+    And it has no separate "m" field, since cM already carries the false-start payload
 
   Scenario: A session-completion-response without early data omits the "m" field from the wire
     Given a MAC value "hM" of 32 bytes
     When I build a SessionCompletionResponse with h_m="hM" and no "m"
     Then the encoded SessionCompletionResponse, when loaded, has an absent "m" field
+    And the encoded SessionCompletionResponse is shorter than the same message with "m" present
 
   Scenario: A session-completion-response with early data carries "m" explicitly
     Given a MAC value "hM" of 32 bytes
