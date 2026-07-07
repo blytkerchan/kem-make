@@ -1,4 +1,4 @@
-# Security sub-layer for KEM-MAKE
+# Key store component for KEM-MAKE
 Feature: Storing and retrieving public keys
   As an implementer of KEM-MAKE
   I want public keys stored in plaintext but identified by a cached KeyId

@@ -1,4 +1,4 @@
-# Security sub-layer for KEM-MAKE
+# Crypto component for KEM-MAKE
 Feature: Crypto backend capability check
   As an implementer of KEM-MAKE
   I want a single startup check that every cryptographic primitive

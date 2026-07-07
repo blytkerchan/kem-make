@@ -1,4 +1,4 @@
-# Security sub-layer for KEM-MAKE
+# Key store component for KEM-MAKE
 Feature: Integrity protection against on-disk tampering
   As an implementer of KEM-MAKE
   I want every stored public key entry, and the alternate-hash index that

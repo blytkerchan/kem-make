@@ -1,4 +1,4 @@
-# Security sub-layer for KEM-MAKE
+# Key store component for KEM-MAKE
 Feature: Storing and retrieving private keys
   As an implementer of KEM-MAKE
   I want private keys wrapped with AES-256 Key Wrap with Padding under a

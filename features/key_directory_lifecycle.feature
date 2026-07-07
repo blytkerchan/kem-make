@@ -1,4 +1,4 @@
-# Security sub-layer for KEM-MAKE
+# Key store component for KEM-MAKE
 Feature: Key directory lifecycle
   As an implementer of KEM-MAKE
   I want a key directory whose master key is derived from a passphrase

@@ -1,4 +1,4 @@
-# Security sub-layer for KEM-MAKE
+# bottom sub-layer for KEM-MAKE
 Feature: KEM public key and ciphertext validation
   As an implementer of KEM-MAKE
   I want KemPublicKey and KemCiphertext to enforce permitted KEM algorithm
