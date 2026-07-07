@@ -5,9 +5,7 @@ Feature: KEM-MAKE handshake messages
   with SessionCompletionResponse's optional early-data field ("m") absent
   from the wire when unused
   So that peers who don't use the early-data optimization pay no encoding
-  cost for it, peers who do use it can distinguish "absent" from "empty",
-  and SessionCompletionRequest's own false-start payload (cM) isn't
-  duplicated by a second field carrying the same thing
+  cost for it, peers who do use it can distinguish "absent" from "empty".
 
   Background:
     Given a valid ML-KEM-768 KemCiphertext "ct"
