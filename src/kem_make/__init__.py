@@ -22,6 +22,7 @@ from .bottom import (
     KemLengthMismatch,
     InvalidCorrelationId,
     NonCanonicalEncoding,
+    EmptyFalseStartPayload,
     # Structures
     KemPublicKey,
     KemCiphertext,
@@ -48,6 +49,7 @@ __all__ = [
     "KemLengthMismatch",
     "InvalidCorrelationId",
     "NonCanonicalEncoding",
+    "EmptyFalseStartPayload",
     "KemPublicKey",
     "KemCiphertext",
     "KeyId",
