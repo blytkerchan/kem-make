@@ -664,3 +664,110 @@ def test_load_rejects_non_canonical_public_key_entry_structure(tmp_path):
 
     with pytest.raises(NonCanonicalEncoding):
         kd.get_public_key(key_id)
+
+
+# ---------------------------------------------------------------------------
+# 16. Alternate-hash redirection: cross-check plus alt_index.der MAC
+# ---------------------------------------------------------------------------
+
+def test_alt_index_redirection_to_a_different_valid_entry_is_rejected(tmp_path):
+    # This is the actual attack, not just a corrupted-file scenario: an
+    # attacker edits alt_index.der to point a legitimate alternate-hash
+    # KeyId at a DIFFERENT, individually-valid (own) entry. That entry's
+    # own MAC verifies fine -- it's not tampered, it's just the wrong
+    # entry. Confirmed exploitable against an earlier version of this
+    # code before the key_ids cross-check existed in
+    # _load_public_entry_by_key_id.
+    from kem_make.keystore import AltIndex, AltIndexEntry, AltIndexFile
+    import os as os_module
+
+    pk_bob = _pk(fill=b"\x11")
+    pk_attacker = _pk(fill=b"\x22")
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    kid_bob = kd.add_public_key(pk_bob)
+    kid_attacker = kd.add_public_key(pk_attacker)
+    kid_bob_sha384 = kd.key_id_for(kid_bob, digest="sha384")
+
+    # Redirect Bob's sha384 KeyId to the attacker's own (individually
+    # valid) entry, re-signing the alt index itself so only the mapping
+    # is wrong, not the file's own integrity -- isolates the cross-check
+    # in _load_public_entry_by_key_id as what's actually being tested.
+    tampered_entries = AltIndex([AltIndexEntry({
+        "key_id": kid_bob_sha384,
+        "primary_hex": kd._hex_of(kid_attacker).encode("ascii"),
+    })])
+    salt = os_module.urandom(16)
+    tag = kd._mac_alt_index(tampered_entries, salt)
+    (tmp_path / "kd" / "alt_index.der").write_bytes(
+        AltIndexFile({"entries": tampered_entries, "mac_salt": salt, "mac_tag": tag}).dump()
+    )
+
+    with pytest.raises(KeyNotFound):
+        kd.get_public_key(kid_bob_sha384)
+
+
+def test_alt_index_mac_tampering_detected(tmp_path):
+    from kem_make.keystore import AltIndexIntegrityError, AltIndexFile
+
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+    kid_sha384 = kd.key_id_for(key_id, digest="sha384")
+
+    path = tmp_path / "kd" / "alt_index.der"
+    stored = AltIndexFile.load(path.read_bytes())
+    bad_tag = bytearray(stored["mac_tag"].native)
+    bad_tag[0] ^= 0xFF
+    tampered = AltIndexFile({
+        "entries": stored["entries"],
+        "mac_salt": stored["mac_salt"],
+        "mac_tag": bytes(bad_tag),
+    })
+    path.write_bytes(tampered.dump())
+
+    with pytest.raises(AltIndexIntegrityError):
+        kd.get_public_key(kid_sha384)
+
+
+def test_alt_index_round_trip_still_works(tmp_path):
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+    kid_sha384 = kd.key_id_for(key_id, digest="sha384")
+    assert kd.get_public_key(kid_sha384).dump() == pk.dump()
+
+
+def test_alt_index_mac_key_is_zeroed_after_use(tmp_path):
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+
+    from kem_make import keystore as keystore_module
+    real_zero = keystore_module._zero
+    zeroed_lengths = []
+
+    def spying_zero(buf):
+        zeroed_lengths.append(len(buf))
+        return real_zero(buf)
+
+    with mock.patch.object(keystore_module, "_zero", spying_zero):
+        kd.key_id_for(key_id, digest="sha384")
+
+    assert 32 in zeroed_lengths, "alt-index MAC key was not zeroed"
+
+
+def test_load_rejects_non_canonical_alt_index(tmp_path):
+    pk = _pk()
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(pk)
+    kid_sha384 = kd.key_id_for(key_id, digest="sha384")
+
+    path = tmp_path / "kd" / "alt_index.der"
+    der = path.read_bytes()
+    assert der[1] == 0x81  # long-form, one length octet
+    length_value = der[2]
+    non_minimal = der[0:1] + bytes([0x82, 0x00, length_value]) + der[3:]
+    path.write_bytes(non_minimal)
+
+    with pytest.raises(NonCanonicalEncoding):
+        kd.get_public_key(kid_sha384)

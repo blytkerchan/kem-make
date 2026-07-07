@@ -73,6 +73,21 @@ the entry's primary (SHA-256-keyed) filename, so a direct lookup by an
 alternate KeyId is also O(1) once that KeyId has been computed at least
 once -- not a rescan of every stored key.
 
+alt_index.der is itself HMAC-protected the same way public key entries
+are (see KeyDirectory._mac_alt_index), but it is treated as an untrusted
+hint regardless: after resolving a primary filename through it,
+_load_public_entry_by_key_id independently confirms the resolved entry's
+own (separately MAC-verified) key_ids actually contains the KeyId that
+was asked for, before ever returning it. This matters because a
+corrupted or attacker-redirected alt_index.der could otherwise point a
+lookup at a different, individually-valid entry -- that entry's own MAC
+would still verify fine, since it isn't tampered, it's just the wrong
+one. Confirmed exploitable against an earlier version of this code
+before that cross-check existed (see test_keystore.py's
+test_alt_index_redirection_to_a_different_valid_entry_is_rejected); the
+alt_index.der MAC is defense in depth on top of that fix, not the thing
+actually preventing the substitution.
+
 Side-channel and hygiene notes
 -------------------------------
 - The passphrase-verification check (see _derive_check_tag) is compared
@@ -179,6 +194,7 @@ _DOMAIN_KEK = b"kem-make-keystore-kek-v1"
 _DOMAIN_CHECK = b"kem-make-keystore-check-v1"
 _CHECK_VALUE = b"kem-make-keystore-checkvalue-v1"
 _DOMAIN_PUBLIC_KEY_MAC = b"kem-make-keystore-pubkey-mac-v1"
+_DOMAIN_ALT_INDEX_MAC = b"kem-make-keystore-altindex-mac-v1"
 
 _WRAP_ALGORITHM_OID = "2.16.840.1.101.3.4.1.48"  # id-aes256-wrap-pad, RFC 5649
 
@@ -221,6 +237,18 @@ class PublicKeyIntegrityError(KeyDirectoryError):
     """Raised when a stored public key entry's MAC does not verify --
     the entry was edited, replaced, or swapped with a different entry's
     file on disk since it was written."""
+    pass
+
+
+class AltIndexIntegrityError(KeyDirectoryError):
+    """Raised when alt_index.der's MAC does not verify -- the file was
+    edited since it was last written. Note that even without this check,
+    a corrupted or redirected alt_index.der cannot cause the wrong key to
+    be silently returned: _load_public_entry_by_key_id independently
+    cross-checks that the entry it resolves to actually contains the
+    requested KeyId. This MAC is defense in depth against a corrupted
+    index causing lookups to silently (and confusingly) miss, not the
+    only thing preventing a wrong-key substitution."""
     pass
 
 
@@ -280,6 +308,11 @@ def _derive_public_key_mac_key(master_key: bytes, salt: bytes, hex_id: str) -> b
         algorithm=hashes.SHA256(), length=MAC_KEY_LEN, salt=salt,
         info=_DOMAIN_PUBLIC_KEY_MAC + hex_id.encode("ascii"),
     )
+    return bytearray(hkdf.derive(bytes(master_key)))
+
+
+def _derive_alt_index_mac_key(master_key: bytes, salt: bytes) -> bytearray:
+    hkdf = HKDF(algorithm=hashes.SHA256(), length=MAC_KEY_LEN, salt=salt, info=_DOMAIN_ALT_INDEX_MAC)
     return bytearray(hkdf.derive(bytes(master_key)))
 
 
@@ -373,6 +406,25 @@ class AltIndexEntry(Sequence):
 
 class AltIndex(SequenceOf):
     _child_spec = AltIndexEntry
+
+
+class AltIndexFile(Sequence):
+    # Same MAC treatment as StoredPublicKeyEntry, and for the same
+    # reason: alt_index.der is a cache mapping alternate-hash KeyIds to a
+    # primary filename, and a corrupted or attacker-edited mapping could
+    # otherwise poison lookups. (The actual "wrong key returned" failure
+    # mode is independently closed by cross-checking the resolved entry's
+    # own key_ids in _load_public_entry_by_key_id -- this MAC is defense
+    # in depth on top of that, not the only thing preventing it.) There's
+    # only one such file, so unlike per-public-key entries there's no
+    # per-entry identity to bind into the derivation; the fixed domain
+    # label is enough to keep this MAC key independent from every other
+    # derivation from the same master key.
+    _fields = [
+        ("entries", AltIndex),
+        ("mac_salt", OctetString),
+        ("mac_tag", OctetString),
+    ]
 
     @classmethod
     def load(cls, encoded_data, **kwargs):
@@ -539,13 +591,30 @@ class KeyDirectory:
             # non-default digest -- fall through to the alt index.
 
         # Alternate-hash path: consult the cached index rather than
-        # scanning and rehashing every stored key.
+        # scanning and rehashing every stored key. alt_index.der is
+        # treated as an untrusted hint, not a source of truth: even after
+        # it points us at a file and that file's own MAC verifies, we
+        # still confirm the resolved entry's key_ids actually contains
+        # the KeyId we were asked to look up. Without this check, a
+        # corrupted or maliciously redirected alt_index.der could point
+        # a lookup at a different, individually-valid entry and we'd
+        # silently return the wrong key -- confirmed exploitable against
+        # an earlier version of this code before this check existed.
         primary_hex = self._alt_index_lookup(key_id)
         if primary_hex is not None:
             alt_path = self._public_path(primary_hex)
             if alt_path.exists():
                 stored = StoredPublicKeyEntry.load(alt_path.read_bytes())
-                return self._verify_and_get_data(stored, primary_hex)
+                data = self._verify_and_get_data(stored, primary_hex)
+                if any(
+                    kid["hash_algorithm"]["algorithm"].dotted == digest_oid
+                    and _key_hash_equal(kid["key_hash"].native, key_id["key_hash"].native)
+                    for kid in data["key_ids"]
+                ):
+                    return data
+                # alt_index.der pointed here, but this entry doesn't
+                # actually have the requested KeyId -- treat exactly like
+                # a miss, not like a match.
 
         raise KeyNotFound(f"no public key found for the given KeyId ({hex_id})")
 
@@ -574,13 +643,33 @@ class KeyDirectory:
 
     # -- alt index ---------------------------------------------------------
 
-    def _alt_index_lookup(self, key_id: KeyId) -> Optional[str]:
+    def _mac_alt_index(self, entries: "AltIndex", salt: bytes) -> bytes:
+        mac_key = _derive_alt_index_mac_key(bytes(self._master_key), salt)
+        try:
+            return hmac.new(bytes(mac_key), entries.dump(force=True), "sha256").digest()
+        finally:
+            _zero(mac_key)
+
+    def _load_alt_index(self) -> "AltIndex":
+        """Loads and MAC-verifies alt_index.der, returning an empty AltIndex
+        if the file doesn't exist yet. Raises AltIndexIntegrityError if the
+        file exists but its MAC doesn't verify."""
         path = self._alt_index_path()
         if not path.exists():
-            return None
-        index = AltIndex.load(path.read_bytes())
+            return AltIndex([])
+        file_obj = AltIndexFile.load(path.read_bytes())
+        expected_tag = self._mac_alt_index(file_obj["entries"], file_obj["mac_salt"].native)
+        actual_tag = file_obj["mac_tag"].native
+        if not hmac.compare_digest(actual_tag, expected_tag):
+            raise AltIndexIntegrityError(
+                "alt_index.der failed integrity verification (edited since it was last written)"
+            )
+        return file_obj["entries"]
+
+    def _alt_index_lookup(self, key_id: KeyId) -> Optional[str]:
+        entries = self._load_alt_index()
         digest_oid = key_id["hash_algorithm"]["algorithm"].dotted
-        for entry in index:
+        for entry in entries:
             if (
                 entry["key_id"]["hash_algorithm"]["algorithm"].dotted == digest_oid
                 and _key_hash_equal(entry["key_id"]["key_hash"].native, key_id["key_hash"].native)
@@ -589,15 +678,16 @@ class KeyDirectory:
         return None
 
     def _alt_index_add(self, key_id: KeyId, primary_hex: str) -> None:
-        path = self._alt_index_path()
-        existing = []
-        if path.exists():
-            existing = list(AltIndex.load(path.read_bytes()))
+        existing = list(self._load_alt_index())
         existing.append(AltIndexEntry({
             "key_id": key_id,
             "primary_hex": primary_hex.encode("ascii"),
         }))
-        _atomic_write(path, AltIndex(existing).dump(), 0o600)
+        new_entries = AltIndex(existing)
+        salt = os.urandom(MAC_SALT_LEN)
+        tag = self._mac_alt_index(new_entries, salt)
+        file_obj = AltIndexFile({"entries": new_entries, "mac_salt": salt, "mac_tag": tag})
+        _atomic_write(self._alt_index_path(), file_obj.dump(), 0o600)
 
     # -- private keys --------------------------------------------------
 

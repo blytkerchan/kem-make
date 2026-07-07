@@ -273,6 +273,16 @@ these):
   persists it back onto that key's entry, and records it in
   `alt_index.der` so a later direct lookup by that alternate hash is
   still an index hit, not a rescan-and-rehash of every stored key.
+  `alt_index.der` is itself MAC-protected the same way public key entries
+  are, but it's treated as an untrusted hint regardless: after resolving
+  a filename through it, the resolved entry's own (independently
+  verified) key list is cross-checked to actually contain the KeyId that
+  was asked for. That cross-check is what actually matters — a
+  corrupted or attacker-redirected `alt_index.der` could otherwise point
+  a lookup at a different, individually-valid entry that would still
+  pass its own MAC (since it isn't tampered, it's just the wrong one).
+  Confirmed exploitable against an earlier version of this code before
+  that check existed.
 - **Wrong-passphrase detection and key lookups both use constant-time
   comparison.** The passphrase check uses a dedicated HKDF-derived check
   tag compared with `hmac.compare_digest`; `KeyId` lookups (both the
