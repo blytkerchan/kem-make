@@ -72,6 +72,21 @@ the encrypted application message Alice sends riding along with handshake
 completion, before Bob has acknowledged. There's deliberately no separate
 `m` field there; one would just duplicate what `cM` already carries.
 
+`cM` must never be empty — an empty ciphertext encrypts zero bytes of
+plaintext, which is known-plaintext by construction regardless of key, so
+it's rejected outright rather than accepted as a valid (if pointless)
+false-start message. This is enforced on `build()`, on `load()`, and on
+`dump()` itself — the last of those is what actually matters, since
+`SessionCompletionRequest` is constructed via a raw dict literal
+everywhere else in this codebase, not exclusively through `build()`, so
+`dump()` is the one chokepoint every send path goes through regardless of
+construction method. Raises `EmptyFalseStartPayload`. `SIZE(1..MAX)` in
+`kem-make.asn1` expresses the same constraint directly in the grammar.
+This is a structural floor (non-zero length), not a cryptographic one —
+it doesn't enforce a real AEAD's actual minimum ciphertext length (e.g. a
+16-byte tag); that's a separate concern for whatever layer actually knows
+which AEAD was negotiated.
+
 `m` on `SessionCompletionResponse` is `OCTET STRING OPTIONAL` (tagged
 `[0]`) — present only when Bob's own early-data optimization is used,
 otherwise absent from the wire entirely (not an empty string). This one
@@ -118,7 +133,7 @@ two separate PDUs.
 
 ```python
 import uuid
-from kem_make.bottom import (
+from kem_make import (
     MakeMessage, SessionInitRequest, KemPublicKey, KemCiphertext, KeyId,
     AeadAlgorithmList,
 )

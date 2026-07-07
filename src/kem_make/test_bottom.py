@@ -11,7 +11,13 @@ Covers:
   7. Optional "m" field on SessionCompletionResponse only: absent vs.
      present. SessionCompletionRequest has no such field -- c_m already
      carries the false-start payload, so a second field would duplicate
-     it; a regression test confirms it stays that way.
+     it; a regression test confirms it stays that way. Separately,
+     SessionCompletionRequest.c_m must never be empty: an empty
+     ciphertext encrypts zero bytes, which is known plaintext regardless
+     of key. Enforced on build(), on load(), and -- the guarantee that
+     actually matters, since this type is constructed via a raw dict
+     literal everywhere else in this codebase -- on dump() itself,
+     regardless of how the object was constructed.
   8. AEAD negotiation: acceptable_aeads (SessionInitRequest, a list of bare
      OIDs, forward-compatible with unrecognized algorithms) and chosen_aead
      (SessionInitResponse, a single bare OID).
@@ -34,6 +40,7 @@ Run with: pytest test_kem_make.py -v
 import uuid
 
 import pytest
+from asn1crypto.core import Sequence, OctetString
 
 from .bottom import (
     KemPublicKey,
@@ -55,6 +62,7 @@ from .bottom import (
     KemLengthMismatch,
     InvalidCorrelationId,
     NonCanonicalEncoding,
+    EmptyFalseStartPayload,
 )
 
 
@@ -265,6 +273,51 @@ def test_session_completion_request_has_no_m_field():
     # separate "m" field here would be redundant. Fails loudly if one is
     # ever reintroduced without updating this decision.
     assert [f[0] for f in SessionCompletionRequest._fields] == ["c_m", "ct4", "n_a"]
+
+
+def test_session_completion_request_build_rejects_empty_c_m():
+    ct4 = _ct()
+    with pytest.raises(EmptyFalseStartPayload, match="known plaintext"):
+        SessionCompletionRequest.build(c_m=b"", ct4=ct4, n_a=b"n" * 16)
+
+
+def test_session_completion_request_dump_rejects_empty_c_m_via_raw_construction():
+    # This is the real guarantee, not test_..._build_rejects_empty_c_m
+    # above: SessionCompletionRequest is constructed via a raw dict
+    # literal everywhere else in this codebase (tests included), not
+    # exclusively through build(). dump() must catch an empty c_m
+    # regardless of how the object was constructed, or "can't be sent"
+    # would only hold for callers who happen to use build().
+    ct4 = _ct()
+    raw = SessionCompletionRequest({"c_m": b"", "ct4": ct4, "n_a": b"n" * 16})
+    with pytest.raises(EmptyFalseStartPayload, match="known plaintext"):
+        raw.dump()
+
+
+def _dump_without_c_m_validation(c_m: bytes, ct4: "KemCiphertext", n_a: bytes) -> bytes:
+    """Encode SessionCompletionRequest-shaped DER without going through
+    SessionCompletionRequest.dump()'s own validation, so load()'s
+    enforcement can be tested independently of dump()'s. Needed because
+    dump() now validates too -- a plain SessionCompletionRequest(...).dump()
+    can no longer be used to manufacture "bad" bytes for a load() test."""
+    class _Unvalidated(Sequence):
+        _fields = [("c_m", OctetString), ("ct4", KemCiphertext), ("n_a", OctetString)]
+
+    return _Unvalidated({"c_m": c_m, "ct4": ct4, "n_a": n_a}).dump()
+
+
+def test_session_completion_request_load_rejects_empty_c_m():
+    ct4 = _ct()
+    der = _dump_without_c_m_validation(b"", ct4, b"n" * 16)
+    with pytest.raises(EmptyFalseStartPayload, match="known plaintext"):
+        SessionCompletionRequest.load(der)
+
+
+def test_session_completion_request_accepts_single_byte_c_m():
+    ct4 = _ct()
+    req = SessionCompletionRequest.build(c_m=b"x", ct4=ct4, n_a=b"n" * 16)
+    parsed = SessionCompletionRequest.load(req.dump())
+    assert parsed["c_m"].native == b"x"
 
 
 def test_session_completion_response_m_absent():

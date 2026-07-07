@@ -115,6 +115,21 @@ class NonCanonicalEncoding(ValueError):
     pass
 
 
+class EmptyFalseStartPayload(ValueError):
+    """Raised when SessionCompletionRequest.c_m is empty.
+
+    c_m is the false-start payload: an encrypted application message, not
+    an optional envelope field. An empty c_m encrypts zero bytes of
+    plaintext -- content that's known to any observer in advance,
+    regardless of key, simply because there's nothing to keep secret. That
+    makes it a known-plaintext ciphertext by construction, so it's
+    rejected outright rather than accepted as a valid (if pointless)
+    false-start message. If there's no message to send yet, don't invoke
+    the false-start optimization at all rather than sending an empty one.
+    """
+    pass
+
+
 def _require_der(cls, encoded_data: bytes, obj):
     # force=True is essential here: asn1crypto's Sequence/Choice cache the
     # original parsed bytes and hand them straight back on a plain dump(),
@@ -285,6 +300,37 @@ class SessionCompletionRequest(Sequence):
         ("ct4", KemCiphertext),
         ("n_a", OctetString),
     ]
+
+    def _validate_c_m(self):
+        if len(self["c_m"].native) == 0:
+            raise EmptyFalseStartPayload(
+                "SessionCompletionRequest.c_m must not be empty (encrypting "
+                "zero bytes is known plaintext regardless of key)"
+            )
+
+    def dump(self, force=False):
+        # This, not build(), is the real guarantee: SessionCompletionRequest
+        # is constructed via a raw dict literal everywhere else in this
+        # codebase (tests included), not exclusively through build(). dump()
+        # is the one chokepoint every send path goes through regardless of
+        # how the object was built, so validating here is what actually
+        # makes "empty c_m can't be sent" true rather than something that
+        # only holds if every caller remembers to use build().
+        self._validate_c_m()
+        return super().dump(force=force)
+
+    @classmethod
+    def load(cls, encoded_data, **kwargs):
+        obj = super().load(encoded_data, **kwargs)
+        _require_der(cls, encoded_data, obj)
+        obj._validate_c_m()
+        return obj
+
+    @classmethod
+    def build(cls, c_m: bytes, ct4: "KemCiphertext", n_a: bytes) -> "SessionCompletionRequest":
+        obj = cls({"c_m": c_m, "ct4": ct4, "n_a": n_a})
+        obj._validate_c_m()
+        return obj
 
 
 class SessionCompletionResponse(Sequence):

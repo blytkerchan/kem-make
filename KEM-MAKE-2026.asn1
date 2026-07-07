@@ -124,7 +124,9 @@ SessionInitResponse ::= SEQUENCE {
 -- acknowledged. A second, distinct "m" field would duplicate exactly
 -- what cM already carries.
 SessionCompletionRequest ::= SEQUENCE {
-    cM          OCTET STRING,
+    cM          OCTET STRING (SIZE(1..MAX)),  -- MUST NOT be empty: encrypting
+                                               -- zero bytes is known plaintext
+                                               -- regardless of key
     ct4         KemCiphertext,
     nA          OCTET STRING
 }

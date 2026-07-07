@@ -5,7 +5,9 @@ Feature: KEM-MAKE handshake messages
   with SessionCompletionResponse's optional early-data field ("m") absent
   from the wire when unused
   So that peers who don't use the early-data optimization pay no encoding
-  cost for it, peers who do use it can distinguish "absent" from "empty".
+  cost for it, peers who do use it can distinguish "absent" from "empty",
+  and SessionCompletionRequest's own false-start payload (cM) isn't
+  duplicated by a second field carrying the same thing
 
   Background:
     Given a valid ML-KEM-768 KemCiphertext "ct"
@@ -61,6 +63,30 @@ Feature: KEM-MAKE handshake messages
     When I build a SessionCompletionRequest with c_m="cM", ct4="ct", n_a="nA"
     Then the SessionCompletionRequest has exactly the fields "c_m", "ct4", and "n_a"
     And it has no separate "m" field, since cM already carries the false-start payload
+
+  Scenario: An empty cM is rejected when building a session-completion-request
+    Given a nonce "nA" of 16 bytes
+    When I attempt to build a SessionCompletionRequest with an empty c_m, ct4="ct", n_a="nA"
+    Then building the SessionCompletionRequest fails with EmptyFalseStartPayload
+    And the failure explains that encrypting zero bytes is known plaintext regardless of key
+
+  Scenario: An empty cM cannot be sent even if it bypasses build() entirely
+    Given a nonce "nA" of 16 bytes
+    And a SessionCompletionRequest constructed directly with an empty c_m, ct4="ct", n_a="nA", without going through build()
+    When I attempt to encode it to DER
+    Then encoding the SessionCompletionRequest fails with EmptyFalseStartPayload
+    And this holds regardless of how the object was constructed, since SessionCompletionRequest is built via a raw dict literal everywhere else in this codebase, not exclusively through build()
+
+  Scenario: An empty cM is rejected when loading a session-completion-request, not only when sending one
+    Given a nonce "nA" of 16 bytes
+    And DER bytes for a SessionCompletionRequest with an empty c_m, ct4="ct", n_a="nA", produced by bypassing both build() and encode-time validation
+    When I load those DER bytes
+    Then loading the SessionCompletionRequest fails with EmptyFalseStartPayload
+
+  Scenario: A single-byte cM is accepted
+    Given a nonce "nA" of 16 bytes
+    When I build a SessionCompletionRequest with c_m as a single byte, ct4="ct", n_a="nA"
+    Then the SessionCompletionRequest round-trips through DER encoding unchanged
 
   Scenario: A session-completion-response without early data omits the "m" field from the wire
     Given a MAC value "hM" of 32 bytes
