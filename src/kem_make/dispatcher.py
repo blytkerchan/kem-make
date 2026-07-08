@@ -53,12 +53,15 @@ once a winner already exists).
 
 No wire-level error message is ever produced for a losing candidate,
 consistent with session.py and candidate.py: discarding is silent.
+
+Not thread-safe, matching CandidateStore's own stated contract -- if a
+single process handles concurrent handshakes across threads, callers
+must serialize access to a shared Dispatcher instance themselves.
 """
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from .bottom import MakeMessage, NonCanonicalEncoding, InvalidCorrelationId
@@ -168,6 +171,15 @@ class Dispatcher:
         if cid in self._responder_sessions:
             self._responder_sessions[cid].post_payload(payload)
             return
+        if cid in self._initiator_templates:
+            # Queue on the template so every FUTURE fork inherits it (see
+            # fork()'s own docstring), and on every currently-live fork so
+            # candidates that already exist get it too, not just ones
+            # spawned after this call.
+            self._initiator_templates[cid].post_payload(payload)
+            for fork in self._initiator_forks.get(cid, []):
+                fork.post_payload(payload)
+            return
         raise DispatcherError(f"no established or in-flight session for cid {cid}")
 
     # -- pull out ---------------------------------------------------------
@@ -184,18 +196,46 @@ class Dispatcher:
     def get_payload(self) -> Tuple[uuid.UUID, bytes]:
         return self._outgoing_payloads.pop(0)
 
+    def close(self, cid: uuid.UUID) -> None:
+        """Explicitly ends an established session and forgets it.
+
+        Without this, _established only ever grows for the life of a
+        Dispatcher instance -- there is deliberately no idle-timeout or
+        max-lifetime policy for established sessions here (see
+        rationale.md: that's a decision for whatever sits above this,
+        which knows what "the session is done" actually means for the
+        application). This is the minimum viable way for a caller who
+        DOES know a session is over to say so, without which there would
+        be no way to release one at all short of dropping the whole
+        Dispatcher. Not sending anything on the wire -- this is a purely
+        local bookkeeping operation, consistent with no-wire-level-error
+        policy elsewhere in this module.
+        """
+        self._established.pop(cid, None)
+
     # -- the crank ---------------------------------------------------------
 
-    def update(self, now: float) -> None:
+    def update(self, now: float) -> Tuple[UpdateResult, float]:
         """Cranks every live session and fork, reaps anything DROPPED,
         and promotes the first fork (or responder session) that reaches
-        ESTABLISHED for its cid, discarding all siblings immediately."""
+        ESTABLISHED for its cid, discarding all siblings immediately.
+
+        Returns (result, next_deadline) mirroring SessionLayer.update()'s
+        own contract: result reflects whether anything is ready to poll
+        across every session/fork this crank touched, and next_deadline
+        is the earliest of every individual session/fork's own next
+        deadline -- callers drive this the same way they'd drive a bare
+        SessionLayer, just at the multi-session level.
+        """
         self._candidates.expire(now)
         self._reconcile_expired_candidates()
 
+        next_deadline = float("inf")
+
         for cid, session in list(self._established.items()):
             try:
-                session.update(now)
+                _, deadline = session.update(now)
+                next_deadline = min(next_deadline, deadline)
             except (HandshakeFailed, UnexpectedPDU):
                 pass
             self._drain(session, cid)
@@ -203,11 +243,12 @@ class Dispatcher:
         for cid in list(self._responder_sessions):
             session = self._responder_sessions[cid]
             try:
-                result, _ = session.update(now)
+                result, deadline = session.update(now)
             except (HandshakeFailed, UnexpectedPDU):
                 del self._responder_sessions[cid]
                 self._candidates.discard(cid)
                 continue
+            next_deadline = min(next_deadline, deadline)
             self._drain(session, cid)
             if session.state is SessionState.ESTABLISHED:
                 self._promote(cid, session)
@@ -220,7 +261,8 @@ class Dispatcher:
             surviving = []
             for fork in self._initiator_forks[cid]:
                 try:
-                    fork.update(now)
+                    _, deadline = fork.update(now)
+                    next_deadline = min(next_deadline, deadline)
                 except (HandshakeFailed, UnexpectedPDU):
                     continue  # this candidate lost; just don't keep it
                 if fork.state is SessionState.ESTABLISHED:
@@ -237,6 +279,14 @@ class Dispatcher:
                 del self._initiator_forks[cid]
                 self._initiator_templates.pop(cid, None)
                 self._candidates.discard(cid)
+
+        if next_deadline == float("inf"):
+            next_deadline = now + self.config.retry_interval_seconds
+        if self.poll_payload():
+            return UpdateResult.PAYLOAD_READY, next_deadline
+        if self.poll_pdu():
+            return UpdateResult.PDU_READY, next_deadline
+        return UpdateResult.NOTHING_READY, next_deadline
 
     # -- internal: routing ---------------------------------------------------
 
@@ -256,6 +306,16 @@ class Dispatcher:
         # key_id_b from the request itself -- see session.py.
         self._responder_sessions[cid] = session
         self._deliver(session, der_bytes, now, cid)
+        if session.state is SessionState.INITIAL:
+            # _handle_session_init_request raised HandshakeFailed before
+            # ever reaching its own state transition (unknown claimed
+            # identity, no mutual AEAD, etc.) -- this session can never
+            # become anything but permanently invalid, so there's no
+            # reason to let it linger in _responder_sessions until its
+            # TTL expires; clean it up immediately instead.
+            del self._responder_sessions[cid]
+            self._candidates.discard(cid)
+            return
         # Now that a real response exists, record it against this cid so
         # the candidate entry reflects the actual (request, response)
         # pair, not a placeholder.

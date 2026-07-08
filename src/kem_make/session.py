@@ -285,10 +285,20 @@ class SessionLayer:
     def __init__(
         self,
         role: Role,
-        own_key_id: KeyId,
+        own_key_id: Optional[KeyId],
         key_lookup: KeyLookup,
         config: Optional[SessionConfig] = None,
     ):
+        # own_key_id may be None ONLY for a RESPONDER: the responder
+        # doesn't know which of its own keys it's being addressed as
+        # until it resolves key_id_b out of the incoming
+        # SessionInitRequest itself (see _handle_session_init_request).
+        # Every own_key_id-reading code path in this class (initiate(),
+        # _handle_session_init_response()) is INITIATOR-only -- if that
+        # ever stops being true, this None-for-responder contract breaks
+        # silently, since Python won't catch it. Checked directly, not
+        # assumed: grep every read of self._own_key_id before relying on
+        # this if you're changing responder-side behavior.
         self.role = role
         self._own_key_id = own_key_id
         self._keys = key_lookup
@@ -408,6 +418,12 @@ class SessionLayer:
         this project's established pattern elsewhere (keystore.py's KEK
         handling, etc.) rather than relying on the cryptography library's
         undocumented copy/deepcopy support for its key objects.
+
+        Any payload already queued via post_payload() before this fork
+        was created is also copied, so a false-start payload queued
+        before any response has arrived reaches every candidate spawned
+        afterward, not just whichever candidate happens to be created
+        first.
         """
         if self.role is not Role.INITIATOR:
             raise SessionLayerError("only an INITIATOR-role SessionLayer can fork()")
@@ -426,6 +442,7 @@ class SessionLayer:
         twin._last_sent = self._last_sent
         twin._attempt_count = self._attempt_count
         twin._deadline = self._deadline
+        twin._pending_payload = self._pending_payload
         return twin
 
     # -- public: the crank ---------------------------------------------------

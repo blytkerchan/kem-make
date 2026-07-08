@@ -13,11 +13,20 @@ kem-make/
 │   ├── bottom.py              # message structures (the "bottom" layer) -- authoritative
 │   ├── crypto_backend.py      # runtime capability check for the crypto backend
 │   ├── keystore.py            # encrypted on-disk key directory (public + private keys)
+│   ├── session.py             # the session layer: handshake + established traffic, one cid
+│   ├── candidate.py           # bounded tracking of unauthenticated first-flight candidates
+│   ├── dispatcher.py          # multi-candidate arbitration on top of session.py + candidate.py
 │   ├── test_bottom.py         # pytest suite for bottom.py
 │   ├── test_crypto_backend.py # pytest suite for crypto_backend.py
 │   ├── test_keystore.py       # pytest suite for keystore.py
+│   ├── test_session.py        # pytest suite for session.py
+│   ├── test_candidate.py      # pytest suite for candidate.py
+│   ├── test_dispatcher.py     # pytest suite for dispatcher.py
 │   └── __init__.py            # re-exports the public API from bottom.py
 ├── KEM-MAKE-2026.asn1         # hand-written ASN.1 schema; documentation only, see below
+├── asn1/                      # vendored, verbatim reference modules from the relevant RFCs --
+│                               # KEM-MAKE-2026.asn1 imports canonical OIDs/classes from these
+│                               # rather than redefining them locally, where one exists
 ├── features/                  # Gherkin feature files (BDD)
 │   ├── *.feature
 │   └── steps/
@@ -322,6 +331,199 @@ Not yet built: no passphrase-change/re-encryption support, no
 keystore-wide locking against concurrent writers. Flagged explicitly in
 the module docstring rather than silently left out.
 
+## Session layer (`session.py`)
+
+The mutually-authenticated handshake and established-session traffic
+from `main.pdf`, run on top of `bottom.py`'s wire structures as a
+transport-agnostic state machine. One `SessionLayer` instance is one
+handshake attempt for one `cid`, either role.
+
+```python
+from kem_make.session import SessionLayer, Role
+
+alice = SessionLayer(Role.INITIATOR, alice_key_id, key_lookup)
+alice.initiate(bob_key_id, now=time.monotonic())
+wire_bytes = alice.get_pdu()          # send this over your transport
+
+# elsewhere, on receipt:
+alice.post_pdu(incoming_bytes)
+result, next_deadline = alice.update(now=time.monotonic())
+if result is UpdateResult.PAYLOAD_READY:
+    plaintext = alice.get_payload()
+```
+
+Key points (the module's own docstring has the full reasoning for all of
+these):
+
+- **Push-in / pull-out / crank, not callbacks.** `post_pdu()`/
+  `post_payload()` only enqueue; `update(now)` is where every state
+  transition, crypto operation, and retry/TTL decision actually happens;
+  `poll_*()`/`get_*()` let the caller pull output whenever it's safe to.
+  Deliberately not callback-based — a callback firing synchronously from
+  inside `post_pdu()` would put the layer's own internals on the call
+  stack exactly where a handler is likely to reenter it, and a pure state
+  machine with no callbacks is far easier to drive from a test.
+- **Retries resend the exact bytes already sent, never regenerated
+  ones.** This is a correctness requirement, not a style choice:
+  regenerating ephemeral keys on retry would produce a structurally
+  valid but cryptographically different message, silently diverging from
+  whatever the peer already derived from the original.
+- **Duplicate detection is a single byte-exact slot, not a history.**
+  `_last_received`/`_last_sent` represent "the pair relevant to the step
+  currently being waited on," overwritten on every real state
+  transition. A byte-exact match against `_last_received` triggers an
+  exact resend of `_last_sent`, never re-entering the handshake logic —
+  sufficient specifically because DER is canonical throughout this
+  project, so semantically-identical and byte-identical are the same
+  test.
+- **The responder never retries; its deadline is a pure TTL.** Bob only
+  ever reacts to Alice's retries. If Bob is seeing repeated retries of
+  the same PDU, that means his own replies aren't reaching Alice, and no
+  amount of holding state open longer fixes a broken return path.
+- **Two independent directional session keys, not one shared key.**
+  `main.pdf`'s literal `H` function produces a single `k`; extended here
+  (following `bottom.py`'s own pre-existing `Message.seq` commentary)
+  into `(key_a2b, iv_a2b, key_b2a, iv_b2a)` from one HKDF salt/IKM,
+  differentiated by `info` label per direction. Per-message nonces are
+  `IV XOR seq` — the same construction TLS 1.3 uses for its per-record
+  nonce — rather than random, since every `Message` already carries
+  `seq` and random nonces would need their own uniqueness bookkeeping
+  this project already does better with a sequence number.
+- **A "nothing to send yet" false-start message relies on the AEAD tag,
+  not a sentinel.** `c_m` can never be empty (see `bottom.py`'s
+  `EmptyFalseStartPayload`); encrypting an *empty plaintext* still
+  produces a non-empty ciphertext (the tag alone), satisfying that
+  constraint as a natural byproduct of using a real AEAD rather than a
+  special-cased placeholder value.
+- **No wire-level error message exists anywhere in this protocol.**
+  Every failure path either raises a local, Python-only exception
+  (`HandshakeFailed`, `UnexpectedPDU`) for the caller to act on, or —
+  for retry/TTL exhaustion specifically — simply produces no further
+  output. Nothing here ever tells a peer, legitimate or attacking, that
+  something went wrong.
+- **`fork()` exists for exactly one reason**: a `cid` may have more than
+  one plausible `SessionInitResponse` in flight (see `dispatcher.py`),
+  and giving each candidate its own sibling — sharing pre-response state
+  but with independent output queues — is how more than one gets tried.
+  The ephemeral private key is reconstructed from its raw seed bytes
+  rather than copied by reference or deep-copied, matching this
+  project's established pattern elsewhere rather than relying on the
+  `cryptography` library's undocumented copy support for its key
+  objects.
+
+Known placeholder, not discussed as a design decision so much as a
+choice that had to be made somehow: established-session anti-replay is
+strict-monotonic-`seq` only, no sliding window, no tolerance for
+reordering — fine for a reliable ordered transport, likely wrong as-is
+for anything else.
+
+## Candidate store (`candidate.py`)
+
+Standalone, protocol-agnostic bookkeeping for unauthenticated
+first-flight PDUs — the actual DoS-mitigation primitive underneath
+`dispatcher.py`. Does no cryptography and parses no PDU; callers hand it
+opaque `(received, sent)` byte pairs per `cid` and tell it when a
+candidate has been cryptographically confirmed.
+
+The threat this exists for: KEM encapsulation only needs a *public* key,
+so anyone holding Alice's and Bob's already-public keys can forge a
+structurally valid `SessionInitResponse` (or `SessionInitRequest`) under
+a given `cid`, without holding any private key at all. The forgery is
+only provably wrong once someone actually derives and confirms the
+session key — until then, a peer holding a `cid` may have more than one
+plausible candidate for it.
+
+- **Bounded two ways**: a small per-`cid` cap (default 3), and a coarser
+  global cap (default 1024) across every `cid` at once.
+- **Promotion is total**: the instant a candidate is cryptographically
+  confirmed, every sibling for that `cid` is discarded, including the
+  winner itself — its bookkeeping moves to whatever confirmed the
+  session, not this store.
+- **TTL is fixed, deliberately not sliding.** A run of legitimate
+  retries proves the request path works and the response path doesn't —
+  extending the deadline wouldn't fix a broken return path, and would
+  let an attacker who captured one legitimate eliciting message replay
+  it indefinitely to keep a candidate alive forever for free, since a
+  matching duplicate costs nothing but a cache hit. Tested explicitly: a
+  matching lookup does not extend `expires_at` as a side effect.
+- **Not thread-safe** — callers sharing one instance across threads must
+  serialize access themselves.
+
+## Multi-candidate dispatcher (`dispatcher.py`)
+
+Arbitrates the actual Mallory scenario: after Alice sends one
+`SessionInitRequest` under some `cid`, she may legitimately receive more
+than one candidate `SessionInitResponse` under that same `cid` — the
+real Bob's, plus zero or more forged ones from anyone who observed the
+request.
+
+```python
+from kem_make.dispatcher import Dispatcher
+
+alice = Dispatcher(key_lookup)
+cid = alice.initiate(alice_key_id, bob_key_id, now=time.monotonic())
+while alice.poll_pdu():
+    transport.send(alice.get_pdu())
+
+# elsewhere, on receipt of anything (real Bob's response, or a forgery):
+alice.post_pdu(incoming_bytes, now=time.monotonic())
+result, next_deadline = alice.update(now=time.monotonic())
+```
+
+- **Asymmetric by design, verified directly before writing any code, not
+  assumed.** A forged `SessionInitRequest` claiming to be Alice can
+  never actually complete a handshake — doing so requires decapsulating
+  `ct1`, which was encapsulated by the real Alice against the real Bob's
+  static public key, using only Bob's real static private key. A forger
+  has no way to obtain that, regardless of which side of the exchange
+  they're impersonating (checked the mirror-image case too: forging as
+  "Bob" instead leaves the forger permanently missing a different
+  secret, for the same structural reason). So the responder side needs
+  only `CandidateStore`'s existing per-`cid`/global caps for a *single*
+  `SessionLayer` per `cid` — all the real arbitration is on the
+  initiator side.
+- **`CandidateStore` is reused for both roles' first real
+  response-generating step.** Responder: `(SessionInitRequest received,
+  SessionInitResponse sent)`. Initiator: `(SessionInitResponse received,
+  SessionCompletionRequest sent)`, one entry per fork. Same caps, same
+  TTL, same store.
+- **Promotion is immediate and total**, not merely eventual — the
+  instant any fork reaches `ESTABLISHED`, every sibling for that `cid`
+  is discarded right there, not on the next `update()` tick, and not
+  contingent on a losing candidate ever producing a reply.
+- **`update(now)` mirrors `SessionLayer`'s own `(result, next_deadline)`
+  contract** rather than returning nothing, so a `Dispatcher` can be
+  driven the same way a bare `SessionLayer` can, just at the
+  multi-session level.
+- **`close(cid)`** is the only way to release an established session —
+  there's deliberately no idle-timeout or max-lifetime policy for
+  established sessions here; that's a decision for whatever sits above
+  this, which knows what "the session is done" actually means for the
+  application.
+- **A responder session that fails validation** (unknown claimed
+  identity, no mutual AEAD) is cleaned up immediately rather than left
+  to linger at `INITIAL` until its `CandidateStore` entry's TTL expires
+  — it can never become anything but permanently invalid, so there's no
+  reason to wait.
+
+Verified end to end, not just unit-by-unit: a forged
+`SessionInitResponse`, built using only public information via the same
+encapsulation calls `session.py` itself uses (no shortcuts, no mocked
+crypto), racing against a real `SessionLayer`-driven Bob, in both
+arrival orders — forged-first and real-first both correctly end with
+Alice established with the real Bob, with the forged fork discarded, and
+the forger cannot complete the handshake even by actively trying to
+respond to their own fork with a fabricated confirmation.
+
+Two real, systemic bugs were caught by that end-to-end test rather than
+by any single unit test: the first working version of message delivery
+processed a candidate's incoming PDU correctly but never actually moved
+the resulting output into the outgoing queue — fixed by merging that
+into one code path so the bug class can't recur by construction, rather
+than auditing every call site by hand — and `update()` initially never
+cranked already-established sessions at all, so `post_payload()` on a
+live session queued correctly but nothing ever processed it.
+
 ## Keeping the schema in sync
 
 `KEM-MAKE-2026.asn1` is maintained by hand. asn1crypto has no schema exporter (nor
@@ -406,18 +608,21 @@ level, so `features/steps/security.py`'s `from kem_make import
 KemPublicKey` couldn't resolve). Both are fixed now: `pip install -e
 ".[dev]"` installs cleanly, `from kem_make import KemPublicKey` and
 `from kem_make.bottom import KemPublicKey` both work, the full test suite
-passes with a plain `pytest src/kem_make` (55 passed, no `PYTHONPATH`
+passes with a plain `pytest src/kem_make` (167 passed, no `PYTHONPATH`
 needed), and `behave` runs without crashing on import.
 
 Still open:
 
-- **`features/steps/bottom.py` is empty.** Every step in
-  `key_id.feature`, `message_envelope.feature`,
-  `post_handshake_message.feature`, and `session_handshake.feature` is
-  undefined as far as `behave` is concerned — confirmed via a full
-  `behave` run: 2 scenarios pass, 48 error, 209 steps undefined. Only
-  `kem_key_material.feature` has any step implementations (in
-  `security.py`), and those are partial.
+- **`features/steps/` only has `bottom.py` and `security.py`.** Every
+  scenario in `key_id.feature`, `message_envelope.feature`,
+  `post_handshake_message.feature`, `session_handshake.feature`,
+  `key_directory_*.feature`, `crypto_backend.feature`,
+  `candidate_store.feature`, `session_handshake_flow.feature`,
+  `session_retry_and_timeout.feature`, and
+  `session_forged_candidates.feature` is undefined as far as `behave` is
+  concerned. Only `kem_key_material.feature` has any step implementations
+  (in `security.py`), and those are partial. Expected, not a bug —
+  step definitions are being written separately, by hand.
 - **`security.py`'s remaining stubs use `StepNotImplementedError`** — a
   good pattern for distinguishing genuinely-unwritten steps from steps
   that intentionally do nothing, worth keeping. Two of the stubs (the
@@ -437,7 +642,21 @@ Still open:
   documentation-only. Worth confirming whether dropping them was
   deliberate (reasonable, since they'll now always skip) or this file
   predates that change.
+- **Established-session anti-replay is strict-monotonic-`seq` only** —
+  no sliding window, no tolerance for reordering. Fine for a reliable
+  ordered transport; likely wrong as-is for anything else.
+- **No idle-timeout or max-lifetime policy for established sessions**
+  beyond `Dispatcher.close()`, which only ever removes a session when a
+  caller explicitly says to. Deliberately left to whatever sits above
+  the session layer, which knows what "the session is done" actually
+  means for the application — not guessed at here.
+- **No integration test against a real `KeyDirectory`.**
+  `test_session.py`/`test_dispatcher.py` use a minimal in-memory fake
+  key lookup throughout; `KeyLookup` is currently only a structural
+  (`Protocol`) guarantee against the real `keystore.KeyDirectory`, never
+  exercised end to end against it.
 
-None of these affect `bottom.py`, `crypto_backend.py`, or `KEM-MAKE-2026.asn1`
-themselves — those three are unchanged from the last verified state and
+None of these affect `bottom.py`, `crypto_backend.py`, `keystore.py`,
+`session.py`, `candidate.py`, `dispatcher.py`, or `KEM-MAKE-2026.asn1`
+themselves — those are unchanged from their last verified state and
 still pass their existing tests.
