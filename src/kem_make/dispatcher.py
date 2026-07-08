@@ -1,0 +1,343 @@
+"""
+Dispatcher: multi-candidate arbitration for the Mallory scenario.
+
+The threat this exists for (see rationale.md and session.py's own
+docstring for the full background): forging a SessionInitResponse
+requires no private key at all, only Alice's and Bob's already-public
+keys. So after Alice sends ONE SessionInitRequest under some cid, she
+may legitimately receive MORE THAN ONE candidate SessionInitResponse
+under that same cid -- the real Bob's, plus zero or more forged ones
+from anyone who observed the request. She has no way to tell them apart
+until one of them produces cryptographic proof (a matching h_m).
+
+This is asymmetric, and deliberately not handled symmetrically here.
+Verified directly (not just argued) before building this: a forged
+SessionInitRequest claiming to be Alice can never actually complete a
+handshake, because doing so requires decapsulating ct1 -- which was
+encapsulated by the real Alice against the real Bob's static public key,
+using ONLY Bob's real static private key. A forger has no way to obtain
+that, regardless of which side of the exchange they're impersonating.
+So the responder side needs only the bounded-candidate-count and
+fixed-TTL protection CandidateStore already provides for a single
+SessionLayer per cid -- it does not need multiple competing SessionLayer
+instances the way the initiator side does. This module reflects that
+asymmetry: responder-side cid handling is a single SessionLayer, gated
+by CandidateStore's caps; initiator-side cid handling may fork into
+several concurrent SessionLayer candidates, arbitrated here.
+
+How forking works
+------------------
+SessionLayer.fork() (see session.py) creates a sibling instance sharing
+the pre-response handshake state (cid, ephemeral keypair, s1, peer
+identity) but with independent output queues, ready to process a
+DIFFERENT SessionInitResponse from scratch. Dispatcher keeps one
+untouched "template" fork per pending initiator cid specifically to
+spawn further candidates from, and a list of "live" forks actually
+processing distinct candidate responses.
+
+CandidateStore is reused for both roles' first real response-generating
+step, not just the responder side: for the responder, it tracks
+(SessionInitRequest received, SessionInitResponse sent); for the
+initiator, it tracks (SessionInitResponse received, SessionCompletionRequest
+sent) per fork. Same caps, same TTL, same store -- the "bound how much
+unauthenticated state one cid or the whole system can accumulate" need is
+identical in shape regardless of which PDU pair it's protecting.
+
+Promotion is immediate and total: the instant any fork (or the single
+responder session) reaches ESTABLISHED, every sibling for that cid is
+discarded right there -- not on the next update() tick, and not
+contingent on the losing candidates ever producing a reply (a forged
+candidate may simply never get a matching response and would otherwise
+just sit there until its own TTL; there is no reason to wait for that
+once a winner already exists).
+
+No wire-level error message is ever produced for a losing candidate,
+consistent with session.py and candidate.py: discarding is silent.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+from .bottom import MakeMessage, NonCanonicalEncoding, InvalidCorrelationId
+from .candidate import CandidateStore, CandidateLimitExceeded
+from .session import (
+    SessionLayer,
+    Role,
+    SessionState,
+    UpdateResult,
+    SessionConfig,
+    SessionLayerError,
+    HandshakeFailed,
+    UnexpectedPDU,
+    KeyLookup,
+    KeyId,
+)
+
+
+class DispatcherError(Exception):
+    pass
+
+
+class Dispatcher:
+    def __init__(
+        self,
+        key_lookup: KeyLookup,
+        config: Optional[SessionConfig] = None,
+        candidate_store: Optional[CandidateStore] = None,
+    ):
+        self._keys = key_lookup
+        self.config = config or SessionConfig()
+        self._candidates = candidate_store or CandidateStore()
+
+        # Confirmed sessions, either role, one per cid.
+        self._established: Dict[uuid.UUID, SessionLayer] = {}
+        # Responder side: at most one SessionLayer per pending cid --
+        # see module docstring for why no arbitration is needed here.
+        self._responder_sessions: Dict[uuid.UUID, SessionLayer] = {}
+        # Initiator side: an untouched template to fork() from, plus the
+        # list of live forks actually processing distinct candidates.
+        self._initiator_templates: Dict[uuid.UUID, SessionLayer] = {}
+        self._initiator_forks: Dict[uuid.UUID, List[SessionLayer]] = {}
+
+        self._outgoing_pdus: List[bytes] = []
+        self._outgoing_payloads: List[Tuple[uuid.UUID, bytes]] = []
+
+    # -- initiating a handshake ---------------------------------------------
+
+    def initiate(self, own_key_id: KeyId, peer_key_id: KeyId, now: float) -> uuid.UUID:
+        primary = SessionLayer(Role.INITIATOR, own_key_id, self._keys, self.config)
+        primary.initiate(peer_key_id, now)
+        cid = primary.cid
+
+        # primary itself serves as the permanent template -- fork() never
+        # mutates self, so it's safe to call repeatedly on the same
+        # object for every incoming response, including the first.
+        # primary is deliberately NOT added to _initiator_forks: it never
+        # itself processes a response, only spawns forks that do.
+        self._initiator_templates[cid] = primary
+        self._initiator_forks[cid] = []
+        while primary.poll_pdu():
+            self._outgoing_pdus.append(primary.get_pdu())
+        return cid
+
+    # -- push in --------------------------------------------------------
+
+    def post_pdu(self, der_bytes: bytes, now: float) -> None:
+        der_bytes = bytes(der_bytes)
+        try:
+            msg = MakeMessage.load(der_bytes)
+        except (NonCanonicalEncoding, InvalidCorrelationId):
+            return  # malformed input silently dropped, matching session.py
+        cid = msg.correlation_id
+        payload_name = msg["payload"].name
+
+        if cid in self._established:
+            self._deliver(self._established[cid], der_bytes, now, cid)
+            return
+
+        if payload_name == "session_init_request":
+            self._route_session_init_request(cid, der_bytes, now)
+            return
+
+        if payload_name == "session_init_response":
+            self._route_session_init_response(cid, der_bytes, now)
+            return
+
+        # session_completion_request only ever makes sense for a
+        # responder session; session_completion_response and message can
+        # apply to either an in-flight responder session or one of
+        # several in-flight initiator forks.
+        if cid in self._responder_sessions:
+            self._deliver(self._responder_sessions[cid], der_bytes, now, cid)
+            self._reap_responder(cid)
+            return
+
+        if cid in self._initiator_forks:
+            self._route_to_forks(cid, der_bytes, now)
+            return
+        # Unknown cid for a PDU type that isn't a first-flight message --
+        # nothing to route to. Silently dropped.
+
+    def post_payload(self, cid: uuid.UUID, payload: bytes) -> None:
+        if cid in self._established:
+            self._established[cid].post_payload(payload)
+            return
+        if cid in self._responder_sessions:
+            self._responder_sessions[cid].post_payload(payload)
+            return
+        raise DispatcherError(f"no established or in-flight session for cid {cid}")
+
+    # -- pull out ---------------------------------------------------------
+
+    def poll_pdu(self) -> bool:
+        return len(self._outgoing_pdus) > 0
+
+    def get_pdu(self) -> bytes:
+        return self._outgoing_pdus.pop(0)
+
+    def poll_payload(self) -> bool:
+        return len(self._outgoing_payloads) > 0
+
+    def get_payload(self) -> Tuple[uuid.UUID, bytes]:
+        return self._outgoing_payloads.pop(0)
+
+    # -- the crank ---------------------------------------------------------
+
+    def update(self, now: float) -> None:
+        """Cranks every live session and fork, reaps anything DROPPED,
+        and promotes the first fork (or responder session) that reaches
+        ESTABLISHED for its cid, discarding all siblings immediately."""
+        self._candidates.expire(now)
+        self._reconcile_expired_candidates()
+
+        for cid, session in list(self._established.items()):
+            try:
+                session.update(now)
+            except (HandshakeFailed, UnexpectedPDU):
+                pass
+            self._drain(session, cid)
+
+        for cid in list(self._responder_sessions):
+            session = self._responder_sessions[cid]
+            try:
+                result, _ = session.update(now)
+            except (HandshakeFailed, UnexpectedPDU):
+                del self._responder_sessions[cid]
+                self._candidates.discard(cid)
+                continue
+            self._drain(session, cid)
+            if session.state is SessionState.ESTABLISHED:
+                self._promote(cid, session)
+            elif session.state is SessionState.DROPPED:
+                del self._responder_sessions[cid]
+                self._candidates.discard(cid)
+
+        for cid in list(self._initiator_forks):
+            winner = None
+            surviving = []
+            for fork in self._initiator_forks[cid]:
+                try:
+                    fork.update(now)
+                except (HandshakeFailed, UnexpectedPDU):
+                    continue  # this candidate lost; just don't keep it
+                if fork.state is SessionState.ESTABLISHED:
+                    winner = fork
+                    break
+                if fork.state is not SessionState.DROPPED:
+                    surviving.append(fork)
+            if winner is not None:
+                self._drain(winner, cid)
+                self._promote(cid, winner)
+            elif surviving:
+                self._initiator_forks[cid] = surviving
+            else:
+                del self._initiator_forks[cid]
+                self._initiator_templates.pop(cid, None)
+                self._candidates.discard(cid)
+
+    # -- internal: routing ---------------------------------------------------
+
+    def _route_session_init_request(self, cid: uuid.UUID, der_bytes: bytes, now: float) -> None:
+        if cid in self._responder_sessions:
+            self._deliver(self._responder_sessions[cid], der_bytes, now, cid)
+            self._reap_responder(cid)
+            return
+
+        try:
+            self._candidates.add(cid, der_bytes, sent_pdu=b"", now=now)
+        except CandidateLimitExceeded:
+            return  # dropped silently, per policy
+
+        session = SessionLayer(Role.RESPONDER, None, self._keys, self.config)
+        # Responder role doesn't need its own_key_id until it resolves
+        # key_id_b from the request itself -- see session.py.
+        self._responder_sessions[cid] = session
+        self._deliver(session, der_bytes, now, cid)
+        # Now that a real response exists, record it against this cid so
+        # the candidate entry reflects the actual (request, response)
+        # pair, not a placeholder.
+        if session.state is SessionState.EXPECT_SESSION_COMPLETION_REQUEST:
+            entries = self._candidates.candidates_for(cid)
+            if entries:
+                entries[0].sent_pdu = session._last_sent or b""
+        self._reap_responder(cid)
+
+    def _route_session_init_response(self, cid: uuid.UUID, der_bytes: bytes, now: float) -> None:
+        if cid not in self._initiator_templates:
+            return  # not a cid we initiated; nothing to fork from
+
+        for fork in self._initiator_forks.get(cid, []):
+            if fork._last_received == der_bytes:
+                self._deliver(fork, der_bytes, now, cid)
+                return  # exact duplicate of an already-tried candidate
+
+        try:
+            self._candidates.add(cid, der_bytes, sent_pdu=b"", now=now)
+        except CandidateLimitExceeded:
+            return  # dropped silently: too many candidates for this cid
+
+        new_fork = self._initiator_templates[cid].fork()
+        self._initiator_forks.setdefault(cid, []).append(new_fork)
+        self._deliver(new_fork, der_bytes, now, cid)
+        entries = self._candidates.candidates_for(cid)
+        for entry in entries:
+            if entry.received_pdu == der_bytes:
+                entry.sent_pdu = new_fork._last_sent or b""
+
+    def _route_to_forks(self, cid: uuid.UUID, der_bytes: bytes, now: float) -> None:
+        for fork in list(self._initiator_forks.get(cid, [])):
+            try:
+                fork.post_pdu(der_bytes)
+                fork.update(now)
+            except (HandshakeFailed, UnexpectedPDU):
+                continue
+            if fork.state is SessionState.ESTABLISHED:
+                self._drain(fork, cid)
+                self._promote(cid, fork)
+                return
+
+    # -- internal: bookkeeping -----------------------------------------------
+
+    def _deliver(self, session: SessionLayer, der_bytes: bytes, now: float, cid: uuid.UUID) -> None:
+        session.post_pdu(der_bytes)
+        try:
+            session.update(now)
+        except (HandshakeFailed, UnexpectedPDU):
+            pass
+        self._drain(session, cid)
+
+    def _drain(self, session: SessionLayer, cid: uuid.UUID) -> None:
+        while session.poll_pdu():
+            self._outgoing_pdus.append(session.get_pdu())
+        while session.poll_payload():
+            self._outgoing_payloads.append((cid, session.get_payload()))
+
+    def _promote(self, cid: uuid.UUID, winner: SessionLayer) -> None:
+        self._established[cid] = winner
+        self._responder_sessions.pop(cid, None)
+        self._initiator_forks.pop(cid, None)
+        self._initiator_templates.pop(cid, None)
+        self._candidates.discard(cid)
+
+    def _reap_responder(self, cid: uuid.UUID) -> None:
+        session = self._responder_sessions.get(cid)
+        if session is None:
+            return
+        if session.state is SessionState.ESTABLISHED:
+            self._drain(session, cid)
+            self._promote(cid, session)
+        elif session.state is SessionState.DROPPED:
+            del self._responder_sessions[cid]
+            self._candidates.discard(cid)
+
+    def _reconcile_expired_candidates(self) -> None:
+        for cid in list(self._responder_sessions):
+            if not self._candidates.candidates_for(cid):
+                del self._responder_sessions[cid]
+        for cid in list(self._initiator_forks):
+            if not self._candidates.candidates_for(cid) and cid not in self._established:
+                self._initiator_forks.pop(cid, None)
+                self._initiator_templates.pop(cid, None)

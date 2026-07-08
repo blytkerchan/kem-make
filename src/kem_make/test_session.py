@@ -23,6 +23,16 @@ Covers:
      HandshakeFailed, not a crash, not a false-positive success.
   8. Unknown claimed identity and no-mutual-AEAD are both rejected before
      any response is sent.
+  9. fork()'s own contract, in isolation: what pre-response state it
+     copies (cid, s1, own ephemeral public key), that the copied
+     ephemeral private key is independently reconstructed (not the same
+     object, but decapsulates identically), that output queues and
+     response-processing state are independent between a fork and its
+     source, that mutating one never affects the other or a sibling fork,
+     and the two error conditions (wrong role, wrong state). This only
+     had indirect coverage via test_dispatcher.py's integration-style
+     tests before -- exercised as a side effect of dispatcher behavior,
+     never asserted as its own contract.
 
 Run with: pytest test_session.py -v
 """
@@ -538,6 +548,136 @@ def test_reset_returns_to_initial_state(parties):
 
     assert alice.state == SessionState.INITIAL
     assert alice.cid is None
+
+
+# ---------------------------------------------------------------------------
+# 9. fork()'s own contract
+# ---------------------------------------------------------------------------
+
+def test_fork_copies_pre_response_state(parties):
+    alice = parties["alice"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+
+    twin = alice.fork()
+
+    assert twin.cid == alice.cid
+    assert twin.role is Role.INITIATOR
+    assert twin.state == SessionState.EXPECT_SESSION_INIT_RESPONSE
+    assert twin._s1 == alice._s1
+    assert twin._peer_key_id["key_hash"].native == alice._peer_key_id["key_hash"].native
+    assert twin._own_ephemeral_public.dump() == alice._own_ephemeral_public.dump()
+
+
+def test_fork_reconstructs_an_independent_but_functionally_identical_private_key(parties):
+    from kem_make.session import _encapsulate, _decapsulate
+
+    alice = parties["alice"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+    twin = alice.fork()
+
+    assert twin._own_ephemeral_private is not alice._own_ephemeral_private
+
+    # Not the same object, but must decapsulate identically: encapsulate
+    # against the (shared) ephemeral public key, and confirm BOTH the
+    # original's and the fork's private key recover the same secret.
+    shared_secret, ct = _encapsulate(alice._own_ephemeral_public)
+    from_original = _decapsulate(alice._own_ephemeral_private.private_bytes_raw(), 768, ct)
+    from_twin = _decapsulate(twin._own_ephemeral_private.private_bytes_raw(), 768, ct)
+    assert from_original == shared_secret
+    assert from_twin == shared_secret
+
+
+def test_fork_has_independent_output_queues(parties):
+    alice = parties["alice"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+    twin = alice.fork()
+
+    assert alice._outgoing_pdus is not twin._outgoing_pdus
+    assert alice._outgoing_payloads is not twin._outgoing_payloads
+    # alice's own SessionInitRequest is still queued on alice specifically,
+    # not duplicated onto the fork.
+    assert alice.poll_pdu()
+    assert not twin.poll_pdu()
+
+
+def test_mutating_a_fork_does_not_affect_its_source(parties):
+    alice = parties["alice"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+    request_bytes = alice.get_pdu()
+
+    twin = alice.fork()
+    twin.post_payload(b"only queued on the twin")
+
+    assert alice._pending_payload is None
+    assert twin._pending_payload == b"only queued on the twin"
+    assert alice.state == SessionState.EXPECT_SESSION_INIT_RESPONSE
+    assert twin.state == SessionState.EXPECT_SESSION_INIT_RESPONSE
+
+
+def test_two_forks_from_the_same_source_are_mutually_independent(parties):
+    alice = parties["alice"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+
+    twin1 = alice.fork()
+    twin2 = alice.fork()
+
+    assert twin1 is not twin2
+    assert twin1._own_ephemeral_private is not twin2._own_ephemeral_private
+    assert twin1._outgoing_pdus is not twin2._outgoing_pdus
+
+    twin1.post_payload(b"only on twin1")
+    assert twin2._pending_payload is None
+
+
+def test_fork_processes_a_response_independently_of_its_source(parties):
+    # The actual point of fork(): feed the fork a DIFFERENT response than
+    # whatever the source (or a sibling) might process, and confirm it
+    # proceeds through its own independent handshake continuation.
+    alice, bob = parties["alice"], parties["bob"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+    bob.post_pdu(alice.get_pdu())
+    bob.update(now=0.0)
+    real_response = bob.get_pdu()
+
+    twin = alice.fork()
+    twin.post_pdu(real_response)
+    twin.update(now=0.0)
+
+    assert twin.state == SessionState.EXPECT_SESSION_COMPLETION_RESPONSE
+    # alice herself never received anything and is untouched.
+    assert alice.state == SessionState.EXPECT_SESSION_INIT_RESPONSE
+    assert alice._last_received is None
+
+
+def test_fork_raises_for_responder_role(parties):
+    bob = parties["bob"]
+    with pytest.raises(SessionLayerError):
+        bob.fork()
+
+
+def test_fork_raises_before_initiate_has_been_called():
+    alice_priv, alice_pub, alice_kid = _make_identity()
+    bob_priv, bob_pub, bob_kid = _make_identity()
+    keys = FakeKeyLookup()
+    keys.add(alice_kid, alice_pub, alice_priv.private_bytes_raw())
+    keys.add(bob_kid, bob_pub)
+
+    fresh = SessionLayer(Role.INITIATOR, alice_kid, keys)
+    with pytest.raises(SessionLayerError):
+        fresh.fork()
+
+
+def test_fork_raises_after_a_response_has_already_been_processed(parties):
+    alice, bob = parties["alice"], parties["bob"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+    bob.post_pdu(alice.get_pdu())
+    bob.update(now=0.0)
+    alice.post_pdu(bob.get_pdu())
+    alice.update(now=0.0)
+    assert alice.state == SessionState.EXPECT_SESSION_COMPLETION_RESPONSE
+
+    with pytest.raises(SessionLayerError):
+        alice.fork()
 
 
 def test_unexpected_pdu_type_for_state_raises(parties):

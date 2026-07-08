@@ -385,6 +385,49 @@ class SessionLayer:
         role, own_key_id, keys, config = self.role, self._own_key_id, self._keys, self.config
         self.__init__(role, own_key_id, keys, config)  # type: ignore[misc]
 
+    def fork(self) -> "SessionLayer":
+        """Create a sibling SessionLayer sharing this instance's
+        pre-response handshake state (cid, own ephemeral keypair, s1,
+        peer identity) but with its own independent output queues and
+        response-processing state.
+
+        Only valid while still EXPECT_SESSION_INIT_RESPONSE -- i.e.
+        before any SessionInitResponse has been processed by this
+        instance. This exists for exactly one reason: the same cid may
+        have more than one plausible SessionInitResponse in flight (the
+        real responder's, plus zero or more forged ones -- forging one
+        requires no private key, only public keys already on the wire;
+        see dispatcher.py and rationale.md). Since session.py's current
+        design has a single SessionLayer own one linear state-machine
+        path, trying more than one candidate response means giving each
+        one its own sibling instance that starts from the identical
+        pre-response state and diverges from there.
+
+        The ephemeral private key is reconstructed from its raw seed
+        bytes rather than copied by reference or deep-copied, matching
+        this project's established pattern elsewhere (keystore.py's KEK
+        handling, etc.) rather than relying on the cryptography library's
+        undocumented copy/deepcopy support for its key objects.
+        """
+        if self.role is not Role.INITIATOR:
+            raise SessionLayerError("only an INITIATOR-role SessionLayer can fork()")
+        if self.state is not SessionState.EXPECT_SESSION_INIT_RESPONSE:
+            raise SessionLayerError("fork() is only valid before a response has been processed")
+
+        twin = SessionLayer(self.role, self._own_key_id, self._keys, self.config)
+        twin.state = SessionState.EXPECT_SESSION_INIT_RESPONSE
+        twin.cid = self.cid
+        twin._peer_key_id = self._peer_key_id
+        twin._own_ephemeral_private = _MLKEM_PRIVATE_CLASSES[self.config.kem_level].from_seed_bytes(
+            self._own_ephemeral_private.private_bytes_raw()
+        )
+        twin._own_ephemeral_public = self._own_ephemeral_public
+        twin._s1 = self._s1
+        twin._last_sent = self._last_sent
+        twin._attempt_count = self._attempt_count
+        twin._deadline = self._deadline
+        return twin
+
     # -- public: the crank ---------------------------------------------------
 
     def update(self, now: float) -> Tuple[UpdateResult, float]:
