@@ -111,9 +111,9 @@ KeyId ::= SEQUENCE {
 -- AlgorithmIdentifier for encryption; that requirement does not apply
 -- here, since these fields only carry the OID for capability
 -- negotiation, analogous to how RFC 8103 defines SMIMECapability
--- announcement (OID only, parameters omitted).
-id-aes256-gcm           OBJECT IDENTIFIER ::= { 2 16 840 1 101 3 4 1 46 }
-id-chacha20-poly1305    OBJECT IDENTIFIER ::= { 1 2 840 113549 1 9 16 3 18 }
+-- announcement (OID only, parameters omitted). AES-128-GCM and
+-- AES-192-GCM deliberately excluded: neither is used anywhere in this
+-- project.
 
 AcceptableAeadList ::= SEQUENCE OF OBJECT IDENTIFIER
 
