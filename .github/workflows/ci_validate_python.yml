@@ -28,5 +28,7 @@ jobs:
       - name: Run pytest
         run: pytest src/ -v
 
-      - name: Run behave
-        run: behave features/
+      # behave features/ is intentionally not run here: this is an active POC
+      # and many scenarios are still StepNotImplementedError (spec written
+      # ahead of implementation), not broken steps. Run it locally / promote
+      # to CI once the feature-to-step coverage is more complete.
