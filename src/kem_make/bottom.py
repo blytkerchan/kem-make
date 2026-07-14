@@ -57,15 +57,14 @@ from asn1crypto.algos import AlgorithmIdentifier, DigestAlgorithm
 # ---------------------------------------------------------------------------
 
 MLKEM_OIDS = {
-    512: "2.16.840.1.101.3.4.4.1",
     768: "2.16.840.1.101.3.4.4.2",
     1024: "2.16.840.1.101.3.4.4.3",
 }
 _OID_TO_LEVEL = {v: k for k, v in MLKEM_OIDS.items()}
 
 # FIPS 203 Table 3
-MLKEM_PK_LEN = {512: 800, 768: 1184, 1024: 1568}
-MLKEM_CT_LEN = {512: 768, 768: 1088, 1024: 1568}
+MLKEM_PK_LEN = {768: 1184, 1024: 1568}
+MLKEM_CT_LEN = {768: 1088, 1024: 1568}
 
 CID_LEN = 16  # 128-bit binary UUID
 
