@@ -39,7 +39,7 @@ regardless of which specific message types are in play.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 
@@ -140,6 +140,13 @@ class CandidateStore:
         global cap -- callers must treat that as "drop the message that
         would have created this candidate," not as a reason to retry the
         add or to tell the peer anything."""
+        
+        # We're given the current time stamp, so let's garbage collect 
+        # any expired candidates before we check limits. This ensures 
+        # that we don't reject a new candidate just because old ones
+        # haven't been cleaned up yet.
+        self.expire(now)
+        
         existing = self._by_cid.setdefault(cid, [])
         if len(existing) >= self._max_per_cid:
             raise CandidateLimitExceeded(
@@ -169,6 +176,7 @@ class CandidateStore:
         (now-confirmed) SessionLayer, not this store. Safe to call even
         if `winner` is not present (e.g. already expired and swept);
         the cid's remaining candidates are still discarded."""
+        _ = winner # quench unused variable warning
         removed = self._by_cid.pop(cid, [])
         self._total -= len(removed)
 
