@@ -63,9 +63,9 @@ Feature: Bounded tracking of unauthenticated handshake candidates
 
   Scenario: Expiry removes only candidates past their fixed TTL
     Given a candidate store with a TTL of 10 seconds
-    And a candidate added for cid "cid-old" at time 0
-    And a candidate added for cid "cid-new" at time 5
-    When I sweep expired candidates at time 12
+    And a candidate added for cid "cid-old" at time 0.0
+    And a candidate added for cid "cid-new" at time 5.0
+    When I sweep expired candidates at time 12.0
     Then cid "cid-old" has no remaining candidates
     And cid "cid-new" still has exactly 1 candidate
 
@@ -77,8 +77,8 @@ Feature: Bounded tracking of unauthenticated handshake candidates
     # who captured one eliciting message keep a forged candidate alive
     # indefinitely just by replaying it.
     Given a candidate store with a TTL of 10 seconds
-    And a candidate added for cid "cid-1" at time 0
-    When I look up a candidate for cid "cid-1" matching its received bytes at time 5
-    And I look up a candidate for cid "cid-1" matching its received bytes at time 9
-    And I sweep expired candidates at time 10
+    And a candidate added for cid "cid-1" at time 0.0
+    When I look up a candidate for cid "cid-1" matching its received bytes at time 5.0
+    And I look up a candidate for cid "cid-1" matching its received bytes at time 9.0
+    And I sweep expired candidates at time 10.0
     Then cid "cid-1" has no remaining candidates
