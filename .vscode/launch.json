@@ -19,7 +19,8 @@
             "args": [
                 "${file}"
             ],
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
         }
     ]
 }
