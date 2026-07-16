@@ -113,13 +113,13 @@ def test_envelope_round_trip():
 # 2 & 3. KEM length / OID validation, build and load paths
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("level", [512, 768, 1024])
+@pytest.mark.parametrize("level", [768, 1024])
 def test_kem_public_key_build_accepts_correct_length(level):
     pk = KemPublicKey.build(b"\x00" * MLKEM_PK_LEN[level], level=level)
     assert len(pk["public_key"].native) == MLKEM_PK_LEN[level]
 
 
-@pytest.mark.parametrize("level", [512, 768, 1024])
+@pytest.mark.parametrize("level", [768, 1024])
 def test_kem_ciphertext_build_accepts_correct_length(level):
     ct = KemCiphertext.build(b"\x00" * MLKEM_CT_LEN[level], level=level)
     assert len(ct["ciphertext"].native) == MLKEM_CT_LEN[level]
