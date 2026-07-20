@@ -24,6 +24,8 @@ dependencies = [
     # at application startup to verify the backend is actually
     # functional, not just importable.
     "cryptography==49.0.0",
+
+    "oschmod>=0.2.2",
 ]
 
 [project.optional-dependencies]

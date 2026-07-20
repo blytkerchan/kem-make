@@ -12,7 +12,15 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Use a matrix strategy to test across multiple environments
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+
+    # Dynamically reference the operating system from the matrix
+    runs-on: ${{ matrix.os }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -27,8 +35,7 @@ jobs:
 
       - name: Run pytest
         run: pytest src/ -v
-
-      # behave features/ is intentionally not run here: this is an active POC
-      # and many scenarios are still StepNotImplementedError (spec written
-      # ahead of implementation), not broken steps. Run it locally / promote
-      # to CI once the feature-to-step coverage is more complete.
+        # behave features/ is intentionally not run here: this is an active POC
+        # and many scenarios are still StepNotImplementedError (spec written
+        # ahead of implementation), not broken steps. Run it locally / promote
+        # to CI once the feature-to-step coverage is more complete.

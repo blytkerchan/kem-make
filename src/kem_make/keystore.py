@@ -125,7 +125,7 @@ Side-channel and hygiene notes
 - Every private key file and the header are created with file mode 0600
   (owner read/write only); public key files with 0644; the directory
   itself and its public/private subdirectories with 0700. This is
-  enforced with os.chmod after creation, not merely requested via the
+  enforced with oschmod.set_mode after creation, not merely requested via the
   open() umask, since umask alone is not reliable across platforms/callers.
 - All writes are atomic: a temp file in the same directory, then
   os.replace(). A crash mid-write cannot leave a half-written key file
@@ -161,6 +161,8 @@ import stat
 import tempfile
 from pathlib import Path
 from typing import Optional
+
+import oschmod
 
 from asn1crypto.core import Sequence, SequenceOf, OctetString, Integer, ObjectIdentifier
 from asn1crypto.algos import DigestAlgorithm
@@ -283,7 +285,7 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        os.chmod(tmp_name, mode)
+        oschmod.set_mode(str(Path(tmp_name)), mode)
         os.replace(tmp_name, path)
     except BaseException:
         try:
@@ -450,11 +452,11 @@ class KeyDirectory:
         if path.exists() and any(path.iterdir()):
             raise KeyDirectoryError(f"{path} already exists and is not empty")
         path.mkdir(parents=True, exist_ok=True)
-        os.chmod(path, 0o700)
+        oschmod.set_mode(str(path), 0o700)
         (path / "public").mkdir(exist_ok=True)
-        os.chmod(path / "public", 0o700)
+        oschmod.set_mode(str(path / "public"), 0o700)
         (path / "private").mkdir(exist_ok=True)
-        os.chmod(path / "private", 0o700)
+        oschmod.set_mode(str(path / "private"), 0o700)
 
         kdf_salt = os.urandom(KDF_SALT_LEN)
         master_key = _derive_master_key(passphrase, kdf_salt, iterations)
