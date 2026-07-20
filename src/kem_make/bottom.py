@@ -90,15 +90,16 @@ def aead_name(oid: str) -> "str | None":
 
 
 class UnknownKemAlgorithm(ValueError):
-    pass
+    """Raised when an unrecognized ML-KEM OID is encountered."""
 
 
 class KemLengthMismatch(ValueError):
-    pass
+    """Raised when a KEM public key or ciphertext has the wrong length."""
 
 
 class InvalidCorrelationId(ValueError):
-    pass
+    """Raised when a MakeMessage.correlation_id is not 128 bits (16 bytes)
+    or otherwise looks invalid."""
 
 
 class NonCanonicalEncoding(ValueError):
@@ -109,7 +110,6 @@ class NonCanonicalEncoding(ValueError):
     the input byte-for-byte. If it doesn't, the input was BER (or otherwise
     non-canonical) and must be rejected rather than silently accepted.
     """
-    pass
 
 
 class EmptyFalseStartPayload(ValueError):
@@ -124,7 +124,6 @@ class EmptyFalseStartPayload(ValueError):
     false-start message. If there's no message to send yet, don't invoke
     the false-start optimization at all rather than sending an empty one.
     """
-    pass
 
 
 def _require_der(cls, encoded_data: bytes, obj):
@@ -143,6 +142,7 @@ def _require_der(cls, encoded_data: bytes, obj):
 
 
 def kem_alg(oid: str) -> AlgorithmIdentifier:
+    """Return an AlgorithmIdentifier for the given ML-KEM OID."""
     # parameters MUST be absent for ML-KEM AlgorithmIdentifiers, not NULL.
     return AlgorithmIdentifier({"algorithm": oid})
 
@@ -152,6 +152,7 @@ def kem_alg(oid: str) -> AlgorithmIdentifier:
 # ---------------------------------------------------------------------------
 
 class KemPublicKey(Sequence):
+    """KEM public key."""
     _fields = [
         ("algorithm", AlgorithmIdentifier),
         ("public_key", OctetString),
@@ -161,25 +162,35 @@ class KemPublicKey(Sequence):
         oid = self["algorithm"]["algorithm"].dotted
         level = _OID_TO_LEVEL.get(oid)
         if level is None:
-            raise UnknownKemAlgorithm(f"unrecognized ML-KEM OID: {oid}")
+            raise UnknownKemAlgorithm(f"unrecognized KEM OID: {oid}")
         expected = MLKEM_PK_LEN[level]
         actual = len(self["public_key"].native)
         if actual != expected:
             raise KemLengthMismatch(
-                f"ML-KEM-{level} public key: expected {expected} bytes, got {actual}"
+                f"KEM-{level} public key: expected {expected} bytes, got {actual}"
             )
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
-        obj._validate_length()
+        obj._validate_length() #pylint: disable=protected-access
         return obj
 
     @classmethod
-    def build(cls, pk_bytes: bytes, level: int = 768) -> "KemPublicKey":
-        if level not in MLKEM_OIDS:
+    def build(
+        cls,
+        pk_bytes: bytes,
+        level: int | None = 768,
+        oid: str | None = None,
+        ) -> "KemPublicKey":
+        """Build a KEM public key for the given level."""
+        if level is not None and level not in MLKEM_OIDS:
             raise UnknownKemAlgorithm(f"unsupported ML-KEM level: {level}")
+        if level is None and oid is not None:
+            level = _OID_TO_LEVEL.get(oid)
+            if level is None:
+                raise UnknownKemAlgorithm(f"unrecognized ML-KEM OID: {oid}")
         obj = cls({
             "algorithm": kem_alg(MLKEM_OIDS[level]),
             "public_key": pk_bytes,
@@ -189,6 +200,7 @@ class KemPublicKey(Sequence):
 
 
 class KemCiphertext(Sequence):
+    """KEM ciphertext."""
     _fields = [
         ("algorithm", AlgorithmIdentifier),
         ("ciphertext", OctetString),
@@ -207,14 +219,15 @@ class KemCiphertext(Sequence):
             )
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
-        obj._validate_length()
+        obj._validate_length() #pylint: disable=protected-access
         return obj
 
     @classmethod
     def build(cls, ct_bytes: bytes, level: int = 768) -> "KemCiphertext":
+        """Build a KEM ciphertext for the given level."""
         if level not in MLKEM_OIDS:
             raise UnknownKemAlgorithm(f"unsupported ML-KEM level: {level}")
         obj = cls({
@@ -230,6 +243,7 @@ class KemCiphertext(Sequence):
 # ---------------------------------------------------------------------------
 
 class KeyId(Sequence):
+    """Key identifier for a KEM public key."""
     _fields = [
         ("hash_algorithm", DigestAlgorithm),
         ("key_hash", OctetString),
@@ -237,6 +251,7 @@ class KeyId(Sequence):
 
     @classmethod
     def build(cls, kem_pk: KemPublicKey, digest: str = "sha256") -> "KeyId":
+        """Compute a KeyId from a KemPublicKey."""
         digest_bytes = hashlib.new(digest, kem_pk.dump()).digest()
         return cls({
             "hash_algorithm": {"algorithm": digest},
@@ -250,6 +265,7 @@ class KeyId(Sequence):
 # ---------------------------------------------------------------------------
 
 class AeadAlgorithmList(SequenceOf):
+    """List of acceptable AEAD algorithms."""
     _child_spec = ObjectIdentifier
 
     @classmethod
@@ -266,6 +282,7 @@ class AeadAlgorithmList(SequenceOf):
 # ---------------------------------------------------------------------------
 
 class SessionInitRequest(Sequence):
+    """Session initiation request from Alice."""
     _fields = [
         ("ct1", KemCiphertext),
         ("key_id_b", KeyId),
@@ -276,6 +293,7 @@ class SessionInitRequest(Sequence):
 
 
 class SessionInitResponse(Sequence):
+    """Session initiation response from Bob."""
     _fields = [
         ("key_id_b", KeyId),
         ("pk_b_star", KemPublicKey),
@@ -287,11 +305,14 @@ class SessionInitResponse(Sequence):
 
 
 class SessionCompletionRequest(Sequence):
-    # No separate optional "m" field here (unlike SessionCompletionResponse):
-    # c_m IS the false-start payload -- the encrypted application message
-    # Alice sends riding along with handshake completion, before Bob has
-    # acknowledged. Adding a second, distinct "m" field would duplicate
-    # exactly what c_m already carries.
+    """Session completion request from Alice.
+
+    No separate optional "m" field here (unlike SessionCompletionResponse):
+    c_m IS the false-start payload -- the encrypted application message
+    Alice sends riding along with handshake completion, before Bob has
+    acknowledged. Adding a second, distinct "m" field would duplicate
+    exactly what c_m already carries.
+    """
     _fields = [
         ("c_m", OctetString),
         ("ct4", KemCiphertext),
@@ -317,23 +338,27 @@ class SessionCompletionRequest(Sequence):
         return super().dump(force=force)
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
-        obj._validate_c_m()
+        obj._validate_c_m() #pylint: disable=protected-access
         return obj
 
     @classmethod
     def build(cls, c_m: bytes, ct4: "KemCiphertext", n_a: bytes) -> "SessionCompletionRequest":
+        """Build a SessionCompletionRequest with the given false-start payload."""
         obj = cls({"c_m": c_m, "ct4": ct4, "n_a": n_a})
         obj._validate_c_m()
         return obj
 
 
 class SessionCompletionResponse(Sequence):
-    # Unlike SessionCompletionRequest, h_m is only an acknowledgment hash,
-    # not a payload -- so an optional "m" here genuinely adds a false-start
-    # reply payload rather than duplicating an existing field.
+    """Session completion response from Bob.
+
+    Unlike SessionCompletionRequest, h_m is only an acknowledgment hash,
+    not a payload -- so an optional "m" here genuinely adds a false-start
+    reply payload rather than duplicating an existing field.
+    """
     _fields = [
         ("h_m", OctetString),
         ("m", OctetString, {"implicit": 0, "optional": True}),
@@ -341,6 +366,7 @@ class SessionCompletionResponse(Sequence):
 
 
 class Message(Sequence):
+    """Encrypted application message sent after session completion."""
     _fields = [
         ("seq", Integer),
         ("m", OctetString),
@@ -348,6 +374,7 @@ class Message(Sequence):
 
 
 class MakePayload(Choice):
+    """Wrapper for all possible payload types in a MakeMessage."""
     _alternatives = [
         ("session_init_request", SessionInitRequest, {"implicit": 0}),
         ("session_init_response", SessionInitResponse, {"implicit": 1}),
@@ -362,6 +389,7 @@ class MakePayload(Choice):
 # ---------------------------------------------------------------------------
 
 class MakeMessage(Sequence):
+    """Versioned session envelope containing the correlation ID and payload."""
     _fields = [
         ("version", Integer, {"default": 0}),  # v1 == 0
         ("cid", OctetString),
@@ -376,17 +404,24 @@ class MakeMessage(Sequence):
             )
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
-        obj._validate_cid()
+        obj._validate_cid() #pylint: disable=protected-access
         return obj
 
     @classmethod
-    def build(cls, cid: uuid.UUID, payload_name: str, payload_value, version: int = 0) -> "MakeMessage":
+    def build(
+        cls,
+        a_correlation_id: uuid.UUID,
+        payload_name: str,
+        payload_value,
+        version: int = 0,
+        ) -> "MakeMessage":
+        """Build a MakeMessage with the given correlation ID and payload."""
         obj = cls({
             "version": version,
-            "cid": cid.bytes,
+            "cid": a_correlation_id.bytes,
             "payload": MakePayload(name=payload_name, value=payload_value),
         })
         obj._validate_cid()
@@ -394,6 +429,7 @@ class MakeMessage(Sequence):
 
     @property
     def correlation_id(self) -> uuid.UUID:
+        """Return the correlation ID as a uuid.UUID object."""
         return uuid.UUID(bytes=self["cid"].native)
 
 
