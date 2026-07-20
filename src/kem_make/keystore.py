@@ -157,7 +157,6 @@ from __future__ import annotations
 
 import hmac
 import os
-import stat
 import tempfile
 from pathlib import Path
 from typing import Optional
