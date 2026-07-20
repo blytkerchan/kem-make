@@ -39,6 +39,7 @@ Run with: pytest test_keystore.py -v
 
 from unittest import mock
 
+import oschmod
 import pytest
 
 from kem_make import KemPublicKey, KeyId, MLKEM_PK_LEN
@@ -278,15 +279,18 @@ def test_permissions(tmp_path):
     key_id = kd.add_public_key(pk)
     kd.add_private_key(pk, b"a" * 32)
 
-    def mode(p):
-        return stat.S_IMODE(p.stat().st_mode)
+    # def mode(p):
+    #     return stat.S_IMODE(p.stat().st_mode)
 
-    assert mode(path) == 0o700
-    assert mode(path / "public") == 0o700
-    assert mode(path / "private") == 0o700
-    assert mode(path / "header.der") == 0o600
-    assert mode(kd._private_path(kd._hex_of(key_id))) == 0o600
-    assert mode(kd._public_path(kd._hex_of(key_id))) == 0o644
+    assert oschmod.get_mode(str(path)) == 0o700
+    assert oschmod.get_mode(str(path / "public")) == 0o700
+    assert oschmod.get_mode(str(path / "private")) == 0o700
+    assert oschmod.get_mode(str(path / "header.der")) == 0o600
+    assert oschmod.get_mode(str(kd._private_path(kd._hex_of(key_id)))) == 0o600
+    public_path_mode = oschmod.get_mode(str(kd._public_path(kd._hex_of(key_id))))
+    # on Windows, the mode should be no more than 0644 but, depending on how things are set up, may show up as 0604.
+    assert public_path_mode == 0o644 or public_path_mode == 0o604, f"public key file mode is {oct(public_path_mode)}, expected 0644 or 0604"
+    #assert oschmod.get_mode(str(kd._public_path(kd._hex_of(key_id)))) == 0o644
 
 
 # ---------------------------------------------------------------------------
