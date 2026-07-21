@@ -71,7 +71,7 @@ import hashlib
 import hmac
 import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Protocol, Tuple, runtime_checkable
 
 from cryptography.hazmat.primitives import hashes as _hashes
@@ -94,7 +94,6 @@ from .bottom import (
     aead_name,
     MLKEM_OIDS,
     UnknownKemAlgorithm,
-    EmptyFalseStartPayload,
 )
 
 
@@ -295,11 +294,12 @@ class SessionConfig:
 
 
 # ---------------------------------------------------------------------------
-# SessionLayer
+# Session
 # ---------------------------------------------------------------------------
 
 class Session:
     """Manages the state and cryptographic context of a session between two parties."""
+    #pylint: disable=too-many-instance-attributes
     def __init__(
         self,
         role: Role,
@@ -356,9 +356,15 @@ class Session:
     # -- public: push in --------------------------------------------------
 
     def post_pdu(self, der_bytes: bytes) -> None:
+        """Appends a received PDU to the incoming queue."""
         self._incoming_queue.append(bytes(der_bytes))
 
     def post_payload(self, payload: bytes) -> None:
+        """Appends a plaintext payload to be sent at the next opportunity.
+        
+        The payload is sent in the next update() call that occurs while the session is ESTABLISHED.
+        If the session is not yet established, the payload is queued until it can be sent. Raises
+        ValueError if the payload is empty."""
         if not payload:
             # see EmptyFalseStartPayload / AEAD tag reasoning
             raise ValueError("payload must be non-empty")
@@ -367,15 +373,19 @@ class Session:
     # -- public: pull out ---------------------------------------------------
 
     def poll_pdu(self) -> bool:
+        """Returns True if a PDU is ready to be sent, False otherwise."""
         return len(self._outgoing_pdus) > 0
 
     def get_pdu(self) -> bytes:
+        """Returns the next PDU to be sent, removing it from the outgoing queue."""
         return self._outgoing_pdus.pop(0)
 
     def poll_payload(self) -> bool:
+        """Returns True if a plaintext payload is ready to be sent, False otherwise."""
         return len(self._outgoing_payloads) > 0
 
     def get_payload(self) -> bytes:
+        """Returns the next plaintext payload to be sent, removing it from the outgoing queue."""
         return self._outgoing_payloads.pop(0)
 
     def get_last_sent(self) -> Optional[bytes]:
@@ -395,6 +405,9 @@ class Session:
     # -- public: lifecycle -------------------------------------------------
 
     def initiate(self, peer_key_id: KeyId, now: float) -> None:
+        """Initiates a handshake with the given peer identity. Only valid for
+        an INITIATOR-role SessionLayer in the INITIAL state. Raises
+        SessionLayerError if called in any other state or role."""
         if self.role is not Role.INITIATOR:
             raise SessionLayerError("only an INITIATOR-role SessionLayer can initiate()")
         if self.state is not SessionState.INITIAL:
@@ -429,7 +442,7 @@ class Session:
         to a state indistinguishable from a freshly constructed instance
         (except role/own_key_id/key_lookup/config, which don't change)."""
         role, own_key_id, keys, config = self.role, self._own_key_id, self._keys, self.config
-        self.__init__(role, own_key_id, keys, config)  # type: ignore[misc]
+        self.__init__(role, own_key_id, keys, config)  # type: ignore[misc] #pylint: disable=unnecessary-dunder-call
 
     def fork(self) -> "Session":
         """Create a sibling SessionLayer sharing this instance's
@@ -469,16 +482,16 @@ class Session:
         twin = Session(self.role, self._own_key_id, self._keys, self.config)
         twin.state = SessionState.EXPECT_SESSION_INIT_RESPONSE
         twin.cid = self.cid
-        twin._peer_key_id = self._peer_key_id
-        twin._own_ephemeral_private = _MLKEM_PRIVATE_CLASSES[self.config.kem_level].from_seed_bytes(
+        twin._peer_key_id = self._peer_key_id #pylint: disable=protected-access
+        twin._own_ephemeral_private = _MLKEM_PRIVATE_CLASSES[self.config.kem_level].from_seed_bytes( #pylint: disable=protected-access
             self._own_ephemeral_private.private_bytes_raw()
         )
-        twin._own_ephemeral_public = self._own_ephemeral_public
-        twin._s1 = self._s1
-        twin._last_sent = self._last_sent
-        twin._attempt_count = self._attempt_count
-        twin._deadline = self._deadline
-        twin._pending_payload = self._pending_payload
+        twin._own_ephemeral_public = self._own_ephemeral_public  #pylint: disable=protected-access
+        twin._s1 = self._s1  #pylint: disable=protected-access
+        twin._last_sent = self._last_sent  #pylint: disable=protected-access
+        twin._attempt_count = self._attempt_count  #pylint: disable=protected-access
+        twin._deadline = self._deadline  #pylint: disable=protected-access
+        twin._pending_payload = self._pending_payload  #pylint: disable=protected-access
         return twin
 
     # -- public: the crank ---------------------------------------------------
@@ -540,6 +553,7 @@ class Session:
     # -- internal: dispatch ---------------------------------------------------
 
     def _process_incoming(self, der_bytes: bytes, now: float) -> None:
+        #pylint: disable=too-many-branches
         # Byte-exact duplicate of what we already accepted for the current
         # state: resend our cached reply verbatim, do not reprocess.
         if self._last_received is not None and der_bytes == self._last_received:
@@ -593,6 +607,7 @@ class Session:
     # -- internal: responder handlers -----------------------------------------
 
     def _handle_session_init_request(self, msg: MakeMessage, der_bytes: bytes, now: float) -> None:
+        #pylint: disable=too-many-locals
         req = msg["payload"].chosen
 
         try:
@@ -644,11 +659,13 @@ class Session:
         self._outgoing_pdus.append(out_der)
 
     def _handle_session_completion_request(
+        #pylint: disable=too-many-locals
         self,
         msg: MakeMessage,
         der_bytes: bytes,
         now: float,
         ) -> None:
+        _ = now  # responder doesn't retry, so no deadline bookkeeping needed here
         req = msg["payload"].chosen
         level = self.config.kem_level
         s4 = _decapsulate(
@@ -705,6 +722,7 @@ class Session:
     # -- internal: initiator handlers -----------------------------------------
 
     def _handle_session_init_response(self, msg: MakeMessage, der_bytes: bytes, now: float) -> None:
+        #pylint: disable=too-many-locals
         resp = msg["payload"].chosen
 
         if not _key_id_equal(resp["key_id_b"], self._peer_key_id):
@@ -754,6 +772,7 @@ class Session:
         self._outgoing_pdus.append(out_der)
 
     def _handle_session_completion_response(self, msg: MakeMessage, der_bytes: bytes, now: float) -> None:
+        _ = now  # initiator doesn't retry, so no deadline bookkeeping needed here
         resp = msg["payload"].chosen
 
         expected_h_m = hashlib.sha256(self._sent_plaintext_for_h_m).digest()
@@ -779,6 +798,7 @@ class Session:
     # -- internal: established-session traffic --------------------------------
 
     def _send_established_payload(self, now: float) -> None:
+        _ = now  # initiator doesn't retry, so no deadline bookkeeping needed here
         payload = self._pending_payload
         self._pending_payload = None
         if self.role is Role.INITIATOR:
