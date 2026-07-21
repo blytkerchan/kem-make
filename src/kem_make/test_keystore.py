@@ -36,6 +36,7 @@ Covers:
 
 Run with: pytest test_keystore.py -v
 """
+# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, line-too-long, protected-access
 
 from unittest import mock
 
@@ -271,8 +272,6 @@ def test_private_key_lookup_by_alternate_hash(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_permissions(tmp_path):
-    import stat
-
     pk = _pk()
     path = tmp_path / "kd"
     kd = KeyDirectory.create(path, b"pass", iterations=_FAST_ITERATIONS)
@@ -289,7 +288,7 @@ def test_permissions(tmp_path):
     assert oschmod.get_mode(str(kd._private_path(kd._hex_of(key_id)))) == 0o600
     public_path_mode = oschmod.get_mode(str(kd._public_path(kd._hex_of(key_id))))
     # on Windows, the mode should be no more than 0644 but, depending on how things are set up, may show up as 0604.
-    assert public_path_mode == 0o644 or public_path_mode == 0o604, f"public key file mode is {oct(public_path_mode)}, expected 0644 or 0604"
+    assert public_path_mode in (0o644, 0o604), f"public key file mode is {oct(public_path_mode)}, expected 0644 or 0604"
     #assert oschmod.get_mode(str(kd._public_path(kd._hex_of(key_id)))) == 0o644
 
 
@@ -364,7 +363,7 @@ def test_kek_is_zeroed_after_use(tmp_path):
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
     kd.add_public_key(pk)
 
-    from kem_make import keystore as keystore_module
+    from kem_make import keystore as keystore_module #pylint: disable=import-outside-toplevel
     real_zero = keystore_module._zero
     zeroed_buffers = []
 
@@ -389,7 +388,9 @@ def test_check_tag_derivation_actually_zeroes_its_key_buffer(tmp_path):
     # always False anyway, so the call never even ran. This confirms
     # _zero is actually invoked on the buffer _derive_check_tag itself
     # holds, not a throwaway copy.
-    from kem_make import keystore as keystore_module
+    from kem_make import keystore as keystore_module #pylint: disable=import-outside-toplevel
+
+    _ = tmp_path # unused, but keeps pytest from complaining about an unused fixture
 
     zeroed_lengths = []
     real_zero = keystore_module._zero
@@ -409,7 +410,7 @@ def test_get_public_key_uses_constant_time_key_hash_comparison(tmp_path):
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
     key_id = kd.add_public_key(pk)
 
-    from kem_make import keystore as keystore_module
+    from kem_make import keystore as keystore_module #pylint: disable=import-outside-toplevel
     with mock.patch.object(keystore_module, "_key_hash_equal", wraps=keystore_module._key_hash_equal) as spy:
         kd.get_public_key(key_id)
         assert spy.called
@@ -421,7 +422,7 @@ def test_alt_index_lookup_uses_constant_time_key_hash_comparison(tmp_path):
     key_id = kd.add_public_key(pk)
     kid_sha384 = kd.key_id_for(key_id, digest="sha384")
 
-    from kem_make import keystore as keystore_module
+    from kem_make import keystore as keystore_module #pylint: disable=import-outside-toplevel
     with mock.patch.object(keystore_module, "_key_hash_equal", wraps=keystore_module._key_hash_equal) as spy:
         found = kd.get_public_key(kid_sha384)
         assert found.dump() == pk.dump()
@@ -429,7 +430,7 @@ def test_alt_index_lookup_uses_constant_time_key_hash_comparison(tmp_path):
 
 
 def test_key_hash_equal_rejects_mismatched_hashes():
-    from kem_make.keystore import _key_hash_equal
+    from kem_make.keystore import _key_hash_equal #pylint: disable=import-outside-toplevel
     assert _key_hash_equal(b"\x00" * 32, b"\x00" * 32) is True
     assert _key_hash_equal(b"\x00" * 32, b"\x01" + b"\x00" * 31) is False
 
@@ -465,7 +466,7 @@ def test_master_key_never_appears_in_any_written_file(tmp_path, passphrase, iter
     pk2 = _pk(fill=b"\x22")
     kid1 = kd.add_public_key(pk1)
     kd.add_private_key(pk1, b"private-key-material-one-32byte")
-    kid2 = kd.add_public_key(pk2)
+    _ = kd.add_public_key(pk2)
     kd.add_private_key(pk2, b"private-key-material-two-32byte")
     kd.key_id_for(kid1, digest="sha384")  # also exercises alt_index.der
 
@@ -484,7 +485,7 @@ def test_header_contains_only_kdf_ingredients_not_the_master_key(tmp_path):
     # More targeted than the scan above: confirms header.der specifically
     # holds only what's needed to re-derive the master key (salt,
     # iterations) plus a verification tag, not the key itself.
-    from kem_make.keystore import KeystoreHeader
+    from kem_make.keystore import KeystoreHeader #pylint: disable=import-outside-toplevel
 
     path = tmp_path / "kd"
     kd = KeyDirectory.create(path, b"pass", iterations=_FAST_ITERATIONS)
@@ -503,7 +504,7 @@ def test_header_contains_only_kdf_ingredients_not_the_master_key(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_tampered_wrapped_key_is_rejected(tmp_path):
-    from kem_make.keystore import PrivateKeyUnwrapFailed, StoredPrivateKeyEntry
+    from kem_make.keystore import PrivateKeyUnwrapFailed, StoredPrivateKeyEntry #pylint: disable=import-outside-toplevel, reimported
 
     pk = _pk()
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
@@ -539,7 +540,7 @@ def test_public_key_round_trip_still_works(tmp_path):
 
 
 def test_tampered_public_key_bytes_detected(tmp_path):
-    from kem_make.keystore import PublicKeyIntegrityError, StoredPublicKeyEntry, PublicKeyEntryData
+    from kem_make.keystore import PublicKeyIntegrityError, StoredPublicKeyEntry, PublicKeyEntryData #pylint: disable=import-outside-toplevel
 
     pk = _pk()
     other_pk = _pk(fill=b"\x99")
@@ -567,7 +568,7 @@ def test_tampered_public_key_bytes_detected(tmp_path):
 
 
 def test_tampered_mac_tag_detected(tmp_path):
-    from kem_make.keystore import PublicKeyIntegrityError, StoredPublicKeyEntry
+    from kem_make.keystore import PublicKeyIntegrityError, StoredPublicKeyEntry #pylint: disable=import-outside-toplevel
 
     pk = _pk()
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
@@ -594,7 +595,7 @@ def test_swapping_two_entries_between_filenames_is_detected(tmp_path):
     # filename/identity -- if the MAC didn't bind the filename in, this
     # swap would go undetected even though it's a real tampering attack
     # (an attacker who can write files can rename/swap them).
-    from kem_make.keystore import PublicKeyIntegrityError
+    from kem_make.keystore import PublicKeyIntegrityError #pylint: disable=import-outside-toplevel
 
     pk1 = _pk(fill=b"\x11")
     pk2 = _pk(fill=b"\x22")
@@ -636,7 +637,7 @@ def test_public_key_mac_key_is_zeroed_after_use(tmp_path):
     pk = _pk()
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
 
-    from kem_make import keystore as keystore_module
+    from kem_make import keystore as keystore_module #pylint: disable=import-outside-toplevel
     real_zero = keystore_module._zero
     zeroed_lengths = []
 
@@ -682,8 +683,8 @@ def test_alt_index_redirection_to_a_different_valid_entry_is_rejected(tmp_path):
     # entry. Confirmed exploitable against an earlier version of this
     # code before the key_ids cross-check existed in
     # _load_public_entry_by_key_id.
-    from kem_make.keystore import AltIndex, AltIndexEntry, AltIndexFile
-    import os as os_module
+    from kem_make.keystore import AltIndex, AltIndexEntry, AltIndexFile #pylint: disable=import-outside-toplevel
+    import os as os_module #pylint: disable=import-outside-toplevel
 
     pk_bob = _pk(fill=b"\x11")
     pk_attacker = _pk(fill=b"\x22")
@@ -711,7 +712,7 @@ def test_alt_index_redirection_to_a_different_valid_entry_is_rejected(tmp_path):
 
 
 def test_alt_index_mac_tampering_detected(tmp_path):
-    from kem_make.keystore import AltIndexIntegrityError, AltIndexFile
+    from kem_make.keystore import AltIndexIntegrityError, AltIndexFile #pylint: disable=import-outside-toplevel
 
     pk = _pk()
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
@@ -746,7 +747,7 @@ def test_alt_index_mac_key_is_zeroed_after_use(tmp_path):
     kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
     key_id = kd.add_public_key(pk)
 
-    from kem_make import keystore as keystore_module
+    from kem_make import keystore as keystore_module #pylint: disable=import-outside-toplevel
     real_zero = keystore_module._zero
     zeroed_lengths = []
 
