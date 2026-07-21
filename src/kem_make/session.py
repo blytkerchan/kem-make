@@ -115,8 +115,8 @@ def _level_of(kem_public_key: KemPublicKey) -> int:
     oid = kem_public_key["algorithm"]["algorithm"].dotted
     try:
         return _OID_TO_LEVEL[oid]
-    except KeyError:
-        raise UnknownKemAlgorithm(f"unsupported ML-KEM OID for the session layer: {oid}")
+    except KeyError as e:
+        raise UnknownKemAlgorithm(f"unsupported ML-KEM OID for the session layer: {oid}") from e
 
 
 def _generate_ephemeral(level: int):
@@ -152,6 +152,7 @@ def _decapsulate(private_seed: bytes, level: int, ciphertext: KemCiphertext) -> 
 
 @dataclass
 class SessionKeys:
+    """The four secrets derived from the handshake, plus the AEAD name"""
     aead_name: str
     key_a2b: bytes
     iv_a2b: bytes
@@ -159,9 +160,11 @@ class SessionKeys:
     iv_b2a: bytes
 
 
-def derive_session_keys(
+def derive_session_keys( #pylint: disable=too-many-arguments,too-many-positional-arguments
     n_a: bytes, n_b: bytes, f_a: bytes, s1: bytes, s2: bytes, s3: bytes, s4: bytes, aead: str,
 ) -> SessionKeys:
+    """Derive the four directional secrets from the handshake's shared secrets and nonces, plus
+    the AEAD name. Raises ValueError if the AEAD is unsupported."""
     if aead not in _AEAD_KEY_LENGTHS:
         raise ValueError(f"unsupported AEAD for session key derivation: {aead}")
     key_length = _AEAD_KEY_LENGTHS[aead]
@@ -194,13 +197,27 @@ def _aead_cipher(aead: str, key: bytes):
     raise ValueError(f"unsupported AEAD: {aead}")
 
 
-def _encrypt(aead: str, key: bytes, iv: bytes, seq: int, plaintext: bytes, associated_data: bytes) -> bytes:
+def _encrypt( #pylint: disable=too-many-arguments,too-many-positional-arguments
+    aead: str,
+    key: bytes,
+    iv: bytes,
+    seq: int,
+    plaintext: bytes,
+    associated_data: bytes,
+    ) -> bytes:
     cipher = _aead_cipher(aead, key)
     nonce = _nonce_for_seq(iv, seq)
     return cipher.encrypt(nonce, plaintext, associated_data)
 
 
-def _decrypt(aead: str, key: bytes, iv: bytes, seq: int, ciphertext: bytes, associated_data: bytes) -> bytes:
+def _decrypt( #pylint: disable=too-many-arguments,too-many-positional-arguments
+    aead: str,
+    key: bytes,
+    iv: bytes,
+    seq: int,
+    ciphertext: bytes,
+    associated_data: bytes,
+    ) -> bytes:
     cipher = _aead_cipher(aead, key)
     nonce = _nonce_for_seq(iv, seq)
     return cipher.decrypt(nonce, ciphertext, associated_data)  # raises InvalidTag on failure
@@ -211,11 +228,14 @@ def _decrypt(aead: str, key: bytes, iv: bytes, seq: int, ciphertext: bytes, asso
 # ---------------------------------------------------------------------------
 
 class Role(enum.Enum):
+    """The two roles a SessionLayer may play in a handshake."""
     INITIATOR = "initiator"   # Alice
     RESPONDER = "responder"   # Bob
 
 
 class SessionState(enum.Enum):
+    """The states a SessionLayer may be in. The state machine is linear, with transitions following
+    the handshake protocol."""
     INITIAL = "initial"
     EXPECT_SESSION_INIT_RESPONSE = "expect_session_init_response"           # initiator only
     EXPECT_SESSION_COMPLETION_REQUEST = "expect_session_completion_request"  # responder only
@@ -225,6 +245,7 @@ class SessionState(enum.Enum):
 
 
 class UpdateResult(enum.Enum):
+    """The possible results of calling update() on a SessionLayer."""
     NOTHING_READY = "nothing_ready"
     PDU_READY = "pdu_ready"
     PAYLOAD_READY = "payload_ready"
@@ -232,13 +253,12 @@ class UpdateResult(enum.Enum):
 
 
 class SessionLayerError(Exception):
-    pass
+    """Base class for all exceptions this module raises."""
 
 
 class UnexpectedPDU(SessionLayerError):
     """A structurally valid MakeMessage arrived, but not one legal for the
     current (role, state)."""
-    pass
 
 
 class HandshakeFailed(SessionLayerError):
@@ -246,13 +266,11 @@ class HandshakeFailed(SessionLayerError):
     an unknown claimed identity, no mutually acceptable AEAD, a
     decryption/h_m mismatch. Never causes any PDU to be sent -- see
     module docstring on wire-level errors."""
-    pass
 
 
 class RetriesExhausted(SessionLayerError):
     """Raised by update() when the configured retry budget is spent
     without a reply. The session moves to DROPPED; no PDU is sent."""
-    pass
 
 
 @runtime_checkable
@@ -260,12 +278,13 @@ class KeyLookup(Protocol):
     """Structural interface this module needs from a key store. The real
     KeyDirectory (keystore.py) already satisfies this; tests can supply a
     lightweight fake instead of standing up a whole KeyDirectory."""
-    def get_public_key(self, key_id: KeyId) -> KemPublicKey: ...
-    def get_private_key(self, key_id: KeyId): ...  # bytes or bytearray
+    def get_public_key(self, key_id: KeyId) -> KemPublicKey: ... #pylint: disable=missing-function-docstring
+    def get_private_key(self, key_id: KeyId): ...  # bytes or bytearray  #pylint: disable=missing-function-docstring
 
 
 @dataclass
 class SessionConfig:
+    """Configurable parameters for a SessionLayer instance."""
     max_retries: int = 2                     # 2 retries => 3 total attempts
     retry_interval_seconds: float = 5.0
     ttl_seconds: float = 60.0                  # generous margin over the retry
@@ -280,6 +299,7 @@ class SessionConfig:
 # ---------------------------------------------------------------------------
 
 class SessionLayer:
+    """Manages the state and cryptographic context of a session between two parties."""
     def __init__(
         self,
         role: Role,
@@ -312,7 +332,9 @@ class SessionLayer:
 
         self._outgoing_pdus: list = []
         self._outgoing_payloads: list = []
-        self._pending_payload: Optional[bytes] = None  # queued via post_payload, sent at next opportunity
+
+        # queued via post_payload, sent at next opportunity
+        self._pending_payload: Optional[bytes] = None
 
         # Handshake-scoped secrets, populated as the exchange progresses.
         self._own_ephemeral_private = None
@@ -326,7 +348,8 @@ class SessionLayer:
         self._session_keys: Optional[SessionKeys] = None
         self._seq_a2b = 0
         self._seq_b2a = 0
-        self._sent_plaintext_for_h_m: Optional[bytes] = None  # initiator: what we encrypted into c_m
+        # initiator: what we encrypted into c_m
+        self._sent_plaintext_for_h_m: Optional[bytes] = None
 
         self._incoming_queue: list = []
 
@@ -337,7 +360,8 @@ class SessionLayer:
 
     def post_payload(self, payload: bytes) -> None:
         if not payload:
-            raise ValueError("payload must be non-empty (see EmptyFalseStartPayload / AEAD tag reasoning)")
+            # see EmptyFalseStartPayload / AEAD tag reasoning
+            raise ValueError("payload must be non-empty")
         self._pending_payload = bytes(payload)
 
     # -- public: pull out ---------------------------------------------------
@@ -360,7 +384,7 @@ class SessionLayer:
         needed for normal operation: the caller can always capture the
         bytes returned from get_pdu() instead."""
         return self._last_sent
-    
+
     def get_last_received(self) -> Optional[bytes]:
         """Returns the last PDU this instance accepted, or None if it has
         never accepted anything. This is useful for testing and logging,
@@ -486,7 +510,10 @@ class SessionLayer:
         if self.state is SessionState.DROPPED:
             return UpdateResult.SESSION_DROPPED, float("inf")
 
-        next_deadline = self._deadline if self._deadline is not None else now + self.config.retry_interval_seconds
+        if self._deadline is not None:
+            next_deadline = self._deadline
+        else:
+            next_deadline = now + self.config.retry_interval_seconds
         if self.poll_payload():
             return UpdateResult.PAYLOAD_READY, next_deadline
         if self.poll_pdu():
@@ -616,7 +643,12 @@ class SessionLayer:
         self.state = SessionState.EXPECT_SESSION_COMPLETION_REQUEST
         self._outgoing_pdus.append(out_der)
 
-    def _handle_session_completion_request(self, msg: MakeMessage, der_bytes: bytes, now: float) -> None:
+    def _handle_session_completion_request(
+        self,
+        msg: MakeMessage,
+        der_bytes: bytes,
+        now: float,
+        ) -> None:
         req = msg["payload"].chosen
         level = self.config.kem_level
         s4 = _decapsulate(
