@@ -106,7 +106,7 @@ def _run_bob(bob: Session, pdu: bytes, now: float):
     bob.post_pdu(pdu)
     try:
         bob.update(now)
-    except Exception:
+    except Exception: #pylint: disable=broad-except
         return None
     return bob.get_pdu() if bob.poll_pdu() else None
 
@@ -216,7 +216,7 @@ def test_forger_cannot_complete_even_if_they_try_to_respond_to_their_own_fork(pa
     alice_disp.post_pdu(forged_response, now=0.0)
     alice_disp.update(now=0.0)
 
-    completion_request = alice_disp.get_pdu()
+    _ = alice_disp.get_pdu()
 
     # The forger fabricates ANY h_m -- they have no way to compute the
     # correct one without s1.
@@ -411,19 +411,19 @@ def test_update_returns_pdu_ready_when_something_is_queued(parties):
 
 def test_update_returns_nothing_ready_when_idle(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
-    result, deadline = alice_disp.update(now=0.0)
+    result, _ = alice_disp.update(now=0.0)
     assert result == UpdateResult.NOTHING_READY
 
 
 def test_update_deadline_reflects_the_earliest_active_session(parties):
-    from kem_make.session import SessionConfig as SC
+    from kem_make.session import SessionConfig as SC # pylint: disable=reimported, import-outside-toplevel
 
     fast_config = SC(retry_interval_seconds=1.0, max_retries=1, ttl_seconds=5.0)
     alice_disp = Dispatcher(parties["alice_keys"], config=fast_config)
     alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     alice_disp.get_pdu()
 
-    result, deadline = alice_disp.update(now=0.0)
+    _, deadline = alice_disp.update(now=0.0)
     # The one active fork's own deadline is now (retry_interval_seconds
     # after initiate()) -- Dispatcher's aggregate deadline must reflect
     # that, not some unrelated default.
@@ -621,11 +621,11 @@ def test_responder_session_with_unknown_claimed_identity_is_cleaned_up_immediate
     # until its CandidateStore entry's TTL expired, rather than being
     # discarded right away -- _reap_responder() only ever checked for
     # ESTABLISHED or DROPPED, neither of which this hits.
-    from kem_make.bottom import MakeMessage, SessionInitRequest, AeadAlgorithmList, AEAD_OIDS
-    from kem_make import KemPublicKey
-    from cryptography.hazmat.primitives.asymmetric import mlkem
+    from kem_make.bottom import MakeMessage, SessionInitRequest, AeadAlgorithmList # pylint: disable=import-outside-toplevel, reimported
+    from kem_make import KemPublicKey # pylint: disable=import-outside-toplevel, reimported
+    from cryptography.hazmat.primitives.asymmetric import mlkem # pylint: disable=import-outside-toplevel, reimported
 
-    stranger_priv, stranger_pub, stranger_kid = _make_identity()
+    _, _, stranger_kid = _make_identity()
     bob_disp = Dispatcher(parties["bob_keys"])
 
     ephemeral_priv = mlkem.MLKEM768PrivateKey.generate()

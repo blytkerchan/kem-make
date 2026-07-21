@@ -36,11 +36,12 @@ Covers:
 
 Run with: pytest test_session.py -v
 """
+# pylint: disable=missing-function-docstring, redefined-outer-name, protected-access, too-many-statements, too-many-lines, multiple-statements
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import mlkem
 
-from kem_make import KemPublicKey, KeyId, MLKEM_PK_LEN
+from kem_make import KemPublicKey, KeyId
 from kem_make.session import (
     Session,
     Role,
@@ -366,7 +367,7 @@ def test_no_pdu_sent_on_drop():
     # Explicit check that dropping never produces output -- see module
     # docstring: no wire-level error message exists in this protocol.
     alice_priv, alice_pub, alice_kid = _make_identity()
-    bob_priv, bob_pub, bob_kid = _make_identity()
+    _, bob_pub, bob_kid = _make_identity()
     alice_keys = FakeKeyLookup()
     alice_keys.add(alice_kid, alice_pub, alice_priv.private_bytes_raw())
     alice_keys.add(bob_kid, bob_pub)
@@ -451,13 +452,13 @@ def test_forged_session_completion_request_is_rejected(parties):
     # SessionCompletionRequest without ever holding a private key --
     # encapsulation only needs Bob's ephemeral public key, which was
     # sent in the clear. Bob must reject it, not crash, not succeed.
-    from kem_make.bottom import MakeMessage, SessionCompletionRequest, KemCiphertext, MLKEM_CT_LEN
+    from kem_make.bottom import MakeMessage, SessionCompletionRequest, KemCiphertext, MLKEM_CT_LEN #pylint: disable=import-outside-toplevel
 
     alice, bob = parties["alice"], parties["bob"]
     alice.initiate(parties["bob_kid"], now=0.0)
     bob.post_pdu(alice.get_pdu())
     bob.update(now=0.0)
-    bob_response = bob.get_pdu()
+    _ = bob.get_pdu()
 
     # Forge a completion request using Bob's ephemeral public key (which
     # was sent in the clear in bob_response) but garbage ciphertext --
@@ -472,7 +473,7 @@ def test_forged_session_completion_request_is_rejected(parties):
 
 
 def test_forged_session_completion_response_is_rejected(parties):
-    from kem_make.bottom import MakeMessage, SessionCompletionResponse
+    from kem_make.bottom import MakeMessage, SessionCompletionResponse #pylint: disable=import-outside-toplevel
 
     alice, bob = parties["alice"], parties["bob"]
     _run_up_to_completion_response_pending(alice, bob, parties)
@@ -498,7 +499,7 @@ def _run_up_to_completion_response_pending(alice, bob, parties):
 # ---------------------------------------------------------------------------
 
 def test_unknown_claimed_sender_identity_is_rejected(parties):
-    alice, bob = parties["alice"], parties["bob"]
+    _, bob = parties["alice"], parties["bob"]
     stranger_priv, stranger_pub, stranger_kid = _make_identity()
 
     # Bob's key_lookup was never told about "stranger" -- Alice's request
@@ -569,7 +570,7 @@ def test_fork_copies_pre_response_state(parties):
 
 
 def test_fork_reconstructs_an_independent_but_functionally_identical_private_key(parties):
-    from kem_make.session import _encapsulate, _decapsulate
+    from kem_make.session import _encapsulate, _decapsulate # pylint: disable=reimported, import-outside-toplevel
 
     alice = parties["alice"]
     alice.initiate(parties["bob_kid"], now=0.0)
@@ -603,7 +604,7 @@ def test_fork_has_independent_output_queues(parties):
 def test_mutating_a_fork_does_not_affect_its_source(parties):
     alice = parties["alice"]
     alice.initiate(parties["bob_kid"], now=0.0)
-    request_bytes = alice.get_pdu()
+    _ = alice.get_pdu()
 
     twin = alice.fork()
     twin.post_payload(b"only queued on the twin")
@@ -657,7 +658,7 @@ def test_fork_raises_for_responder_role(parties):
 
 def test_fork_raises_before_initiate_has_been_called():
     alice_priv, alice_pub, alice_kid = _make_identity()
-    bob_priv, bob_pub, bob_kid = _make_identity()
+    _, bob_pub, bob_kid = _make_identity()
     keys = FakeKeyLookup()
     keys.add(alice_kid, alice_pub, alice_priv.private_bytes_raw())
     keys.add(bob_kid, bob_pub)
@@ -681,9 +682,9 @@ def test_fork_raises_after_a_response_has_already_been_processed(parties):
 
 
 def test_unexpected_pdu_type_for_state_raises(parties):
-    from kem_make.bottom import MakeMessage, Message
+    from kem_make.bottom import MakeMessage, Message #pylint: disable=import-outside-toplevel
 
-    alice, bob = parties["alice"], parties["bob"]
+    alice, _ = parties["alice"], parties["bob"]
     alice.initiate(parties["bob_kid"], now=0.0)
 
     # A Message PDU arriving while still expecting a session_init_response.
