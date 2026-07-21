@@ -42,7 +42,7 @@ from cryptography.hazmat.primitives.asymmetric import mlkem
 
 from kem_make import KemPublicKey, KeyId, MLKEM_PK_LEN
 from kem_make.session import (
-    SessionLayer,
+    Session,
     Role,
     SessionState,
     UpdateResult,
@@ -116,8 +116,8 @@ def parties():
     alice_config = SessionConfig(max_retries=2, retry_interval_seconds=5.0, ttl_seconds=20.0)
     bob_config = SessionConfig(max_retries=2, retry_interval_seconds=5.0, ttl_seconds=20.0)
 
-    alice = SessionLayer(Role.INITIATOR, alice_kid, alice_keys, alice_config)
-    bob = SessionLayer(Role.RESPONDER, bob_kid, bob_keys, bob_config)
+    alice = Session(Role.INITIATOR, alice_kid, alice_keys, alice_config)
+    bob = Session(Role.RESPONDER, bob_kid, bob_keys, bob_config)
 
     return {
         "alice": alice, "bob": bob,
@@ -307,8 +307,8 @@ def test_get_payload_drains_in_fifo_order_regression():
     bob_keys.add(bob_kid, bob_pub, bob_priv.private_bytes_raw())
     bob_keys.add(alice_kid, alice_pub)
 
-    alice = SessionLayer(Role.INITIATOR, alice_kid, alice_keys)
-    bob = SessionLayer(Role.RESPONDER, bob_kid, bob_keys)
+    alice = Session(Role.INITIATOR, alice_kid, alice_keys)
+    bob = Session(Role.RESPONDER, bob_kid, bob_keys)
 
     alice.post_payload(b"false-start")
     alice.initiate(bob_kid, now=0.0)
@@ -372,7 +372,7 @@ def test_no_pdu_sent_on_drop():
     alice_keys.add(bob_kid, bob_pub)
 
     config = SessionConfig(max_retries=1, retry_interval_seconds=1.0)
-    alice = SessionLayer(Role.INITIATOR, alice_kid, alice_keys, config)
+    alice = Session(Role.INITIATOR, alice_kid, alice_keys, config)
     alice.initiate(bob_kid, now=0.0)
     alice.get_pdu()
 
@@ -507,7 +507,7 @@ def test_unknown_claimed_sender_identity_is_rejected(parties):
     alice_keys_with_stranger.add(stranger_kid, stranger_pub, stranger_priv.private_bytes_raw())
     alice_keys_with_stranger.add(parties["bob_kid"], parties["bob_keys"].get_public_key(parties["bob_kid"]))
 
-    impostor = SessionLayer(Role.INITIATOR, stranger_kid, alice_keys_with_stranger, parties["config"])
+    impostor = Session(Role.INITIATOR, stranger_kid, alice_keys_with_stranger, parties["config"])
     impostor.initiate(parties["bob_kid"], now=0.0)
 
     bob.post_pdu(impostor.get_pdu())
@@ -525,8 +525,8 @@ def test_no_mutual_aead_is_rejected(parties):
     alice_config = SessionConfig(acceptable_aeads=("aes256-gcm",))
     bob_config = SessionConfig(acceptable_aeads=("chacha20-poly1305",))
 
-    alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"], alice_config)
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"], bob_config)
+    alice = Session(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"], alice_config)
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"], bob_config)
 
     alice.initiate(parties["bob_kid"], now=0.0)
     bob.post_pdu(alice.get_pdu())
@@ -662,7 +662,7 @@ def test_fork_raises_before_initiate_has_been_called():
     keys.add(alice_kid, alice_pub, alice_priv.private_bytes_raw())
     keys.add(bob_kid, bob_pub)
 
-    fresh = SessionLayer(Role.INITIATOR, alice_kid, keys)
+    fresh = Session(Role.INITIATOR, alice_kid, keys)
     with pytest.raises(SessionLayerError):
         fresh.fork()
 

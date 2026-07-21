@@ -298,7 +298,7 @@ class SessionConfig:
 # SessionLayer
 # ---------------------------------------------------------------------------
 
-class SessionLayer:
+class Session:
     """Manages the state and cryptographic context of a session between two parties."""
     def __init__(
         self,
@@ -431,7 +431,7 @@ class SessionLayer:
         role, own_key_id, keys, config = self.role, self._own_key_id, self._keys, self.config
         self.__init__(role, own_key_id, keys, config)  # type: ignore[misc]
 
-    def fork(self) -> "SessionLayer":
+    def fork(self) -> "Session":
         """Create a sibling SessionLayer sharing this instance's
         pre-response handshake state (cid, own ephemeral keypair, s1,
         peer identity) but with its own independent output queues and
@@ -466,7 +466,7 @@ class SessionLayer:
         if self.state is not SessionState.EXPECT_SESSION_INIT_RESPONSE:
             raise SessionLayerError("fork() is only valid before a response has been processed")
 
-        twin = SessionLayer(self.role, self._own_key_id, self._keys, self.config)
+        twin = Session(self.role, self._own_key_id, self._keys, self.config)
         twin.state = SessionState.EXPECT_SESSION_INIT_RESPONSE
         twin.cid = self.cid
         twin._peer_key_id = self._peer_key_id

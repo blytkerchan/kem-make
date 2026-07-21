@@ -67,7 +67,7 @@ from typing import Dict, List, Optional, Tuple
 from .bottom import MakeMessage
 from .candidate import CandidateStore, CandidateLimitExceeded
 from .session import (
-    SessionLayer,
+    Session,
     Role,
     SessionState,
     UpdateResult,
@@ -99,14 +99,14 @@ class Dispatcher:
         self._candidates = candidate_store or CandidateStore()
 
         # Confirmed sessions, either role, one per cid.
-        self._established: Dict[uuid.UUID, SessionLayer] = {}
+        self._established: Dict[uuid.UUID, Session] = {}
         # Responder side: at most one SessionLayer per pending cid --
         # see module docstring for why no arbitration is needed here.
-        self._responder_sessions: Dict[uuid.UUID, SessionLayer] = {}
+        self._responder_sessions: Dict[uuid.UUID, Session] = {}
         # Initiator side: an untouched template to fork() from, plus the
         # list of live forks actually processing distinct candidates.
-        self._initiator_templates: Dict[uuid.UUID, SessionLayer] = {}
-        self._initiator_forks: Dict[uuid.UUID, List[SessionLayer]] = {}
+        self._initiator_templates: Dict[uuid.UUID, Session] = {}
+        self._initiator_forks: Dict[uuid.UUID, List[Session]] = {}
 
         self._outgoing_pdus: List[bytes] = []
         self._outgoing_payloads: List[Tuple[uuid.UUID, bytes]] = []
@@ -117,7 +117,7 @@ class Dispatcher:
         """Starts a new handshake as an initiator, returning the cid to
         use for all subsequent PDUs in this handshake. The returned cid
         is unique to this handshake."""
-        primary = SessionLayer(Role.INITIATOR, own_key_id, self._keys, self.config)
+        primary = Session(Role.INITIATOR, own_key_id, self._keys, self.config)
         primary.initiate(peer_key_id, now)
         cid = primary.cid
 
@@ -270,7 +270,7 @@ class Dispatcher:
     def _process_initiator_forks(self, now: float, next_deadline: float) -> float:
         for cid in list(self._initiator_forks):
             winner = None
-            surviving: list[SessionLayer] = []
+            surviving: list[Session] = []
             for fork in self._initiator_forks[cid]:
                 try:
                     _, deadline = fork.update(now)
@@ -334,7 +334,7 @@ class Dispatcher:
         except CandidateLimitExceeded:
             return  # dropped silently, per policy
 
-        session = SessionLayer(Role.RESPONDER, None, self._keys, self.config)
+        session = Session(Role.RESPONDER, None, self._keys, self.config)
         # Responder role doesn't need its own_key_id until it resolves
         # key_id_b from the request itself -- see session.py.
         self._responder_sessions[cid] = session
@@ -394,7 +394,7 @@ class Dispatcher:
 
     # -- internal: bookkeeping -----------------------------------------------
 
-    def _deliver(self, session: SessionLayer, der_bytes: bytes, now: float, cid: uuid.UUID) -> None:
+    def _deliver(self, session: Session, der_bytes: bytes, now: float, cid: uuid.UUID) -> None:
         session.post_pdu(der_bytes)
         try:
             session.update(now)
@@ -402,13 +402,13 @@ class Dispatcher:
             pass
         self._drain(session, cid)
 
-    def _drain(self, session: SessionLayer, cid: uuid.UUID) -> None:
+    def _drain(self, session: Session, cid: uuid.UUID) -> None:
         while session.poll_pdu():
             self._outgoing_pdus.append(session.get_pdu())
         while session.poll_payload():
             self._outgoing_payloads.append((cid, session.get_payload()))
 
-    def _promote(self, cid: uuid.UUID, winner: SessionLayer) -> None:
+    def _promote(self, cid: uuid.UUID, winner: Session) -> None:
         self._established[cid] = winner
         self._responder_sessions.pop(cid, None)
         self._initiator_forks.pop(cid, None)

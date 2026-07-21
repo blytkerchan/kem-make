@@ -27,7 +27,7 @@ from kem_make import KemPublicKey, KeyId
 from kem_make.bottom import MakeMessage, SessionInitResponse, AEAD_OIDS
 from kem_make.dispatcher import Dispatcher
 from kem_make.candidate import CandidateStore
-from kem_make.session import SessionLayer, Role, SessionState, SessionConfig, UpdateResult
+from kem_make.session import Session, Role, SessionState, SessionConfig, UpdateResult
 import kem_make.session as session_module
 
 
@@ -98,7 +98,7 @@ def _forge_session_init_response(cid, bob_kid, alice_pub, aead="aes256-gcm"):
     return MakeMessage.build(cid, "session_init_response", resp).dump()
 
 
-def _run_bob(bob: SessionLayer, pdu: bytes, now: float):
+def _run_bob(bob: Session, pdu: bytes, now: float):
     """Feeds a PDU to a real Bob SessionLayer, tolerating (and reporting)
     a HandshakeFailed the way a real deployment would -- Bob simply
     produces no reply for a candidate that doesn't decrypt correctly."""
@@ -116,7 +116,7 @@ def _run_bob(bob: SessionLayer, pdu: bytes, now: float):
 
 def test_full_handshake_with_no_forgery(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     request = alice_disp.get_pdu()
@@ -141,7 +141,7 @@ def test_full_handshake_with_no_forgery(parties):
 
 def test_forged_response_first_then_real_response_still_establishes_with_bob(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     request = alice_disp.get_pdu()
@@ -176,7 +176,7 @@ def test_real_response_first_then_forged_response_still_establishes_with_bob(par
     # real one, and after the real one may have already been drained
     # through completion, must not disturb the already-winning candidate.
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     request = alice_disp.get_pdu()
@@ -236,7 +236,7 @@ def test_forger_cannot_complete_even_if_they_try_to_respond_to_their_own_fork(pa
 
 def test_duplicate_response_does_not_create_a_second_fork(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     request = alice_disp.get_pdu()
@@ -276,7 +276,7 @@ def test_per_cid_candidate_cap_bounds_forks(parties):
 
 def test_established_payload_routing(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     response = _run_bob(bob, alice_disp.get_pdu(), now=0.0)
@@ -311,7 +311,7 @@ def test_post_payload_to_unknown_cid_raises(parties):
 
 def test_promotion_clears_siblings_immediately_not_next_tick(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     request = alice_disp.get_pdu()
@@ -348,7 +348,7 @@ def test_post_payload_before_any_response_reaches_every_future_fork(parties):
     # go. Also required fork() to actually copy _pending_payload, which
     # it didn't.
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     alice_disp.post_payload(cid, b"false-start, queued before any response")
@@ -431,7 +431,7 @@ def test_update_deadline_reflects_the_earliest_active_session(parties):
 
 def test_close_removes_an_established_session(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     response = _run_bob(bob, alice_disp.get_pdu(), now=0.0)
@@ -554,7 +554,7 @@ def test_post_pdu_delivers_to_an_already_established_session(parties):
     # alice_disp.post_pdu() the same way the false-start/payload tests do
     # it in the other direction.
     alice_disp = Dispatcher(parties["alice_keys"])
-    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+    bob = Session(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
 
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     response = _run_bob(bob, alice_disp.get_pdu(), now=0.0)
@@ -584,7 +584,7 @@ def test_post_pdu_routes_session_completion_request_to_an_existing_responder_ses
     # was never covered. Run the full handshake with Bob as a Dispatcher
     # too, with Alice as a raw SessionLayer on the other side.
     bob_disp = Dispatcher(parties["bob_keys"])
-    alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"])
+    alice = Session(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"])
 
     alice.initiate(parties["bob_kid"], now=0.0)
     cid = alice.cid
@@ -672,7 +672,7 @@ def test_update_responder_sessions_handshake_failure_does_not_raise_typeerror(pa
     from kem_make.bottom import SessionCompletionRequest, KemCiphertext, MLKEM_CT_LEN
 
     bob_disp = Dispatcher(parties["bob_keys"])
-    alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"])
+    alice = Session(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"])
     alice.initiate(parties["bob_kid"], now=0.0)
     cid = alice.cid
 
@@ -698,7 +698,7 @@ def test_update_responder_sessions_handshake_failure_does_not_raise_typeerror(pa
 def test_update_responder_sessions_ttl_drop_does_not_raise_typeerror(parties):
     fast_config = SessionConfig(retry_interval_seconds=1.0, max_retries=1, ttl_seconds=5.0)
     bob_disp = Dispatcher(parties["bob_keys"], config=fast_config)
-    alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"], fast_config)
+    alice = Session(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"], fast_config)
     alice.initiate(parties["bob_kid"], now=0.0)
     cid = alice.cid
 
