@@ -248,33 +248,23 @@ class Dispatcher:
 
         next_deadline = float("inf")
 
-        for cid, session in list(self._established.items()):
-            try:
-                _, deadline = session.update(now)
-                next_deadline = min(next_deadline, deadline)
-            except (HandshakeFailed, UnexpectedPDU):
-                pass
-            self._drain(session, cid)
+        next_deadline = self._update_established_sessions(now, next_deadline)
+        next_deadline = self._update_responder_sessions(now, next_deadline)
 
-        for cid in list(self._responder_sessions):
-            session = self._responder_sessions[cid]
-            try:
-                result, deadline = session.update(now)
-            except (HandshakeFailed, UnexpectedPDU):
-                del self._responder_sessions[cid]
-                self._candidates.discard(cid)
-                continue
-            next_deadline = min(next_deadline, deadline)
-            self._drain(session, cid)
-            if session.state is SessionState.ESTABLISHED:
-                self._promote(cid, session)
-            elif session.state is SessionState.DROPPED:
-                del self._responder_sessions[cid]
-                self._candidates.discard(cid)
+        next_deadline = self._process_initiator_forks(now, next_deadline)
 
+        if next_deadline == float("inf"):
+            next_deadline = now + self.config.retry_interval_seconds
+        if self.poll_payload():
+            return UpdateResult.PAYLOAD_READY, next_deadline
+        if self.poll_pdu():
+            return UpdateResult.PDU_READY, next_deadline
+        return UpdateResult.NOTHING_READY, next_deadline
+
+    def _process_initiator_forks(self, now: float, next_deadline: float) -> float:
         for cid in list(self._initiator_forks):
             winner = None
-            surviving = []
+            surviving: list[SessionLayer] = []
             for fork in self._initiator_forks[cid]:
                 try:
                     _, deadline = fork.update(now)
@@ -295,14 +285,35 @@ class Dispatcher:
                 del self._initiator_forks[cid]
                 self._initiator_templates.pop(cid, None)
                 self._candidates.discard(cid)
+        return next_deadline
 
-        if next_deadline == float("inf"):
-            next_deadline = now + self.config.retry_interval_seconds
-        if self.poll_payload():
-            return UpdateResult.PAYLOAD_READY, next_deadline
-        if self.poll_pdu():
-            return UpdateResult.PDU_READY, next_deadline
-        return UpdateResult.NOTHING_READY, next_deadline
+    def _update_responder_sessions(self, now: float, next_deadline: float) -> float:
+        for cid in list(self._responder_sessions):
+            session = self._responder_sessions[cid]
+            try:
+                _, deadline = session.update(now)
+            except (HandshakeFailed, UnexpectedPDU):
+                del self._responder_sessions[cid]
+                self._candidates.discard(cid) #HERE: this should cause a TypeError--unit test coverage?
+                continue
+            next_deadline = min(next_deadline, deadline)
+            self._drain(session, cid)
+            if session.state is SessionState.ESTABLISHED:
+                self._promote(cid, session)
+            elif session.state is SessionState.DROPPED:
+                del self._responder_sessions[cid]
+                self._candidates.discard(cid) #HERE: this should cause a TypeError--unit test coverage?
+        return next_deadline
+
+    def _update_established_sessions(self, now: float, next_deadline: float) -> float:
+        for cid, session in list(self._established.items()):
+            try:
+                _, deadline = session.update(now)
+                next_deadline = min(next_deadline, deadline)
+            except (HandshakeFailed, UnexpectedPDU):
+                pass
+            self._drain(session, cid)
+        return next_deadline
 
     # -- internal: routing ---------------------------------------------------
 
