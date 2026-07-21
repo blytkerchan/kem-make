@@ -39,9 +39,7 @@ Run with: pytest test_session.py -v
 # pylint: disable=missing-function-docstring, redefined-outer-name, protected-access, too-many-statements, too-many-lines, multiple-statements
 
 import pytest
-from cryptography.hazmat.primitives.asymmetric import mlkem
 
-from kem_make import KemPublicKey, KeyId
 from kem_make.session import (
     Session,
     Role,
@@ -59,73 +57,12 @@ from kem_make.session import (
     _decrypt,
 )
 
+from .conftest import FakeKeyLookup, _make_identity
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-class FakeKeyLookup:
-    """Minimal stand-in for KeyDirectory, satisfying the KeyLookup Protocol
-    structurally. Real integration against keystore.KeyDirectory is a
-    separate concern -- these tests are about the session layer's own
-    logic, not the key store's."""
-
-    def __init__(self):
-        self._pub = {}
-        self._priv = {}
-
-    def add(self, key_id: KeyId, public_key: KemPublicKey, private_key=None):
-        self._pub[bytes(key_id["key_hash"].native)] = public_key
-        if private_key is not None:
-            self._priv[bytes(key_id["key_hash"].native)] = private_key
-
-    def get_public_key(self, key_id: KeyId) -> KemPublicKey:
-        return self._pub[bytes(key_id["key_hash"].native)]
-
-    def get_private_key(self, key_id: KeyId):
-        return self._priv[bytes(key_id["key_hash"].native)]
-
-
-def _make_identity(level=768):
-    private = mlkem.MLKEM768PrivateKey.generate() if level == 768 else mlkem.MLKEM1024PrivateKey.generate()
-    public_wire = KemPublicKey.build(private.public_key().public_bytes_raw(), level=level)
-    key_id = KeyId.build(public_wire)
-    return private, public_wire, key_id
-
-
-@pytest.fixture
-def parties():
-    """Alice (initiator) and Bob (responder), each knowing their own
-    keypair and the other's public key, with a fast retry/TTL config so
-    tests don't need to sleep."""
-    alice_priv, alice_pub, alice_kid = _make_identity()
-    bob_priv, bob_pub, bob_kid = _make_identity()
-
-    alice_keys = FakeKeyLookup()
-    alice_keys.add(alice_kid, alice_pub, alice_priv.private_bytes_raw())
-    alice_keys.add(bob_kid, bob_pub)
-
-    bob_keys = FakeKeyLookup()
-    bob_keys.add(bob_kid, bob_pub, bob_priv.private_bytes_raw())
-    bob_keys.add(alice_kid, alice_pub)
-
-    # Deliberately separate SessionConfig instances, not one shared
-    # object -- a test that mutates alice.config expecting it not to
-    # affect bob.config (or vice versa) would otherwise silently corrupt
-    # itself. See test_no_mutual_aead_is_rejected for exactly this bug,
-    # caught while writing these tests.
-    alice_config = SessionConfig(max_retries=2, retry_interval_seconds=5.0, ttl_seconds=20.0)
-    bob_config = SessionConfig(max_retries=2, retry_interval_seconds=5.0, ttl_seconds=20.0)
-
-    alice = Session(Role.INITIATOR, alice_kid, alice_keys, alice_config)
-    bob = Session(Role.RESPONDER, bob_kid, bob_keys, bob_config)
-
-    return {
-        "alice": alice, "bob": bob,
-        "alice_kid": alice_kid, "bob_kid": bob_kid,
-        "alice_keys": alice_keys, "bob_keys": bob_keys,
-        "config": alice_config,
-    }
 
 
 def _run_full_handshake(parties, t=0.0):
