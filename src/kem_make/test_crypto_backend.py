@@ -9,6 +9,7 @@ functional round trip.
 Run with: pytest test_crypto_backend.py -v
 """
 
+import runpy
 from unittest import mock
 
 import pytest
@@ -93,6 +94,79 @@ def test_chacha20_poly1305_round_trip():
     assert chacha.decrypt(nonce, ct, None) == b"hello"
 
 
+@pytest.mark.parametrize(
+    "cls, key_kwargs",
+    [
+        (cb.AESGCM, {"bit_length": 256}),
+        (cb.ChaCha20Poly1305, {}),
+    ],
+)
+def test_check_aead_passes_for_real_backends(cls, key_kwargs):
+    # Must not raise for either AEAD this layer relies on.
+    cb._check_aead(cls.__name__, cls, key_kwargs)
+
+
+def test_check_aead_wraps_round_trip_exception():
+    class BrokenAEAD:
+        @classmethod
+        def generate_key(cls):
+            return b"\x00" * 32
+
+        def __init__(self, key):
+            pass
+
+        def encrypt(self, nonce, pt, aad):
+            raise NotImplementedError("simulated broken AEAD")
+
+    with pytest.raises(cb.CryptoBackendUnsupported, match="fake-aead"):
+        cb._check_aead("fake-aead", BrokenAEAD, {})
+
+
+def test_check_aead_detects_mismatched_plaintext():
+    # Simulate a backend that runs without error but silently corrupts data
+    # -- the same "ran clean but wrong" class of bug the mismatched-
+    # shared-secret ML-KEM test guards against.
+    class LyingAEAD:
+        @classmethod
+        def generate_key(cls):
+            return b"\x00" * 32
+
+        def __init__(self, key):
+            pass
+
+        def encrypt(self, nonce, pt, aad):
+            return b"ciphertext"
+
+        def decrypt(self, nonce, ct, aad):
+            return b"not-the-plaintext"
+
+    with pytest.raises(cb.CryptoBackendUnsupported, match="mismatched plaintext"):
+        cb._check_aead("fake-aead", LyingAEAD, {})
+
+
+def test_check_aead_passes_key_kwargs_through_to_generate_key():
+    calls = []
+
+    class RecordingAEAD:
+        @classmethod
+        def generate_key(cls, **kwargs):
+            calls.append(kwargs)
+            return b"\x00" * 32
+
+        def __init__(self, key):
+            pass
+
+        def encrypt(self, nonce, pt, aad):
+            return pt
+
+        def decrypt(self, nonce, ct, aad):
+            return ct
+
+    cb._check_aead("fake-aead", RecordingAEAD, {"bit_length": 256})
+
+    assert calls == [{"bit_length": 256}]
+
+
 def test_check_backend_detects_broken_aead():
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
@@ -110,6 +184,24 @@ def test_hkdf_round_trip():
     hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"test")
     derived = hkdf.derive(b"\x00" * 32)
     assert len(derived) == 32
+
+
+def test_check_hkdf_wraps_round_trip_exception():
+    with mock.patch.object(
+        cb.HKDF, "derive",
+        side_effect=NotImplementedError("simulated broken HKDF"),
+    ):
+        with pytest.raises(cb.CryptoBackendUnsupported, match="HKDF-SHA256 failed"):
+            cb._check_hkdf()
+
+
+def test_check_hkdf_detects_wrong_output_length():
+    with mock.patch.object(cb.HKDF, "derive", return_value=b"\x00" * 16):
+        with pytest.raises(
+            cb.CryptoBackendUnsupported,
+            match=r"HKDF-SHA256 returned 16 bytes, expected 32",
+        ):
+            cb._check_hkdf()
 
 
 def test_mlkem_ciphertext_and_key_sizes_match_fips_203_table_3():
@@ -134,3 +226,21 @@ def test_mlkem_ciphertext_and_key_sizes_match_fips_203_table_3():
             f"ML-KEM-{level} public key length mismatch: "
             f"cryptography gave {len(pub_bytes)}, kem_make.py expects {MLKEM_PK_LEN[level]}"
         )
+
+
+def test_main_block_runs_check_backend_and_prints_summary(capsys):
+    # runpy.run_path re-executes the file's source with __name__ set to
+    # "__main__", in-process -- so it actually exercises the `if __name__
+    # == "__main__":` block (a real check_backend() call followed by the
+    # summary print) and, unlike a subprocess.run() invocation, is visible
+    # to coverage.py since it runs under the same interpreter/trace hook
+    # as the rest of the test suite.
+    runpy.run_path(cb.__file__, run_name="__main__")
+
+    out = capsys.readouterr().out
+    assert "Crypto backend check passed" in out
+    assert "ML-KEM-768" in out
+    assert "ML-KEM-1024" in out
+    assert "AES-GCM" in out
+    assert "ChaCha20-Poly1305" in out
+    assert "HKDF-SHA256" in out
