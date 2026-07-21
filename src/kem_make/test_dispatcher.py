@@ -455,6 +455,147 @@ def test_close_on_unknown_cid_is_a_harmless_no_op(parties):
     alice_disp.close(uuid.uuid4())  # must not raise
 
 
+# ---------------------------------------------------------------------------
+# 8. post_pdu: direct coverage of every routing branch, including the ones
+#    only ever exercised incidentally (or not at all) by the scenarios above.
+# ---------------------------------------------------------------------------
+
+def test_post_pdu_silently_drops_non_canonical_der(parties):
+    # Mirrors test_bottom.py's own BER-rejection regression test: a valid
+    # value re-encoded with a non-minimal (long-form where short-form
+    # would do) length octet is valid BER but not canonical DER, so
+    # MakeMessage.load() must raise NonCanonicalEncoding -- which post_pdu
+    # is documented to swallow silently, same as session.py.
+    import uuid
+    from kem_make.bottom import SessionCompletionResponse
+
+    alice_disp = Dispatcher(parties["alice_keys"])
+    cid = uuid.uuid4()
+    der = MakeMessage.build(
+        cid, "session_completion_response", SessionCompletionResponse({"h_m": b"x" * 32}),
+    ).dump()
+    assert der[1] < 0x80  # precondition: short-form length, so this rewrite actually changes it
+    ber = der[0:1] + bytes([0x81, der[1]]) + der[2:]  # same value, long-form length
+
+    alice_disp.post_pdu(ber, now=0.0)  # must not raise
+
+    assert not alice_disp._established
+    assert not alice_disp._responder_sessions
+    assert not alice_disp._initiator_forks
+    assert not alice_disp.poll_pdu()
+    assert not alice_disp.poll_payload()
+
+
+def test_post_pdu_silently_drops_invalid_correlation_id(parties):
+    from kem_make.bottom import SessionCompletionResponse
+
+    alice_disp = Dispatcher(parties["alice_keys"])
+    bad = MakeMessage({
+        "version": 0,
+        "cid": b"\x00" * 8,  # too short: 64 bits, not the required 128
+        "payload": ("session_completion_response", SessionCompletionResponse({"h_m": b"x" * 32})),
+    }).dump()
+
+    alice_disp.post_pdu(bad, now=0.0)  # must not raise
+
+    assert not alice_disp._established
+    assert not alice_disp._responder_sessions
+    assert not alice_disp._initiator_forks
+    assert not alice_disp.poll_pdu()
+    assert not alice_disp.poll_payload()
+
+
+def test_post_pdu_drops_pdu_for_a_completely_unknown_cid(parties):
+    # Well-formed PDU, but neither a session_init_request nor a
+    # session_init_response, and its cid matches no established session,
+    # responder session, or initiator fork -- the final fallthrough in
+    # post_pdu, nothing to route to.
+    import uuid
+    from kem_make.bottom import SessionCompletionResponse
+
+    alice_disp = Dispatcher(parties["alice_keys"])
+    unknown_cid = uuid.uuid4()
+    der = MakeMessage.build(
+        unknown_cid, "session_completion_response", SessionCompletionResponse({"h_m": b"y" * 32}),
+    ).dump()
+
+    alice_disp.post_pdu(der, now=0.0)  # must not raise
+
+    assert not alice_disp._established
+    assert not alice_disp._responder_sessions
+    assert not alice_disp._initiator_forks
+    assert not alice_disp.poll_pdu()
+    assert not alice_disp.poll_payload()
+
+
+def test_post_pdu_delivers_to_an_already_established_session(parties):
+    # None of the scenarios above ever feed a PDU back into a Dispatcher
+    # AFTER its session for that cid reached ESTABLISHED -- so the
+    # `if cid in self._established` branch at the very top of post_pdu was
+    # never actually exercised. Complete a real handshake, then have Bob
+    # (a raw SessionLayer) send an application message back through
+    # alice_disp.post_pdu() the same way the false-start/payload tests do
+    # it in the other direction.
+    alice_disp = Dispatcher(parties["alice_keys"])
+    bob = SessionLayer(Role.RESPONDER, parties["bob_kid"], parties["bob_keys"])
+
+    cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
+    response = _run_bob(bob, alice_disp.get_pdu(), now=0.0)
+    alice_disp.post_pdu(response, now=0.0)
+    alice_disp.update(now=0.0)
+    completion_response = _run_bob(bob, alice_disp.get_pdu(), now=0.0)
+    alice_disp.post_pdu(completion_response, now=0.0)
+    alice_disp.update(now=0.0)
+    assert cid in alice_disp._established
+
+    bob.post_payload(b"hello from an already-established session")
+    bob.update(now=0.0)
+    assert bob.poll_pdu()
+    pdu = bob.get_pdu()
+
+    alice_disp.post_pdu(pdu, now=0.0)  # hits the `cid in self._established` branch directly
+
+    assert alice_disp.poll_payload()
+    assert alice_disp.get_payload() == (cid, b"hello from an already-established session")
+
+
+def test_post_pdu_routes_session_completion_request_to_an_existing_responder_session(parties):
+    # None of the scenarios above ever run Bob's side THROUGH a Dispatcher
+    # -- Bob is always a raw SessionLayer -- so the
+    # `if cid in self._responder_sessions` branch (reached for a
+    # session_completion_request once a responder session already exists)
+    # was never covered. Run the full handshake with Bob as a Dispatcher
+    # too, with Alice as a raw SessionLayer on the other side.
+    bob_disp = Dispatcher(parties["bob_keys"])
+    alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"])
+
+    alice.initiate(parties["bob_kid"], now=0.0)
+    cid = alice.cid
+    request = alice.get_pdu()
+
+    bob_disp.post_pdu(request, now=0.0)  # session_init_request: creates the responder session
+    assert cid in bob_disp._responder_sessions
+    assert bob_disp.poll_pdu()
+    response = bob_disp.get_pdu()
+
+    alice.post_pdu(response)
+    alice.update(now=0.0)
+    completion_request = alice.get_pdu()
+
+    # session_completion_request, routed to the responder session that
+    # already exists for this cid -- the branch under test.
+    bob_disp.post_pdu(completion_request, now=0.0)
+
+    assert cid in bob_disp._established
+    assert cid not in bob_disp._responder_sessions
+    assert bob_disp.poll_pdu()
+    completion_response = bob_disp.get_pdu()
+
+    alice.post_pdu(completion_response)
+    alice.update(now=0.0)
+    assert alice.state is SessionState.ESTABLISHED
+
+
 def test_responder_session_with_unknown_claimed_identity_is_cleaned_up_immediately(parties):
     # Real gap found during review: a responder session that fails
     # validation on its FIRST message (unknown claimed identity, in this
