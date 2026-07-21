@@ -76,6 +76,7 @@ from .session import (
     UnexpectedPDU,
     KeyLookup,
     KeyId,
+    next_update_result,
 )
 
 
@@ -261,11 +262,7 @@ class Dispatcher:
 
         if next_deadline == float("inf"):
             next_deadline = now + self.config.retry_interval_seconds
-        if self.poll_payload():
-            return UpdateResult.PAYLOAD_READY, next_deadline
-        if self.poll_pdu():
-            return UpdateResult.PDU_READY, next_deadline
-        return UpdateResult.NOTHING_READY, next_deadline
+        return next_update_result(self, next_deadline)
 
     def _process_initiator_forks(self, now: float, next_deadline: float) -> float:
         for cid in list(self._initiator_forks):

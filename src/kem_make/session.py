@@ -281,6 +281,26 @@ class KeyLookup(Protocol):
     def get_private_key(self, key_id: KeyId): ...  # bytes or bytearray  #pylint: disable=missing-function-docstring
 
 
+@runtime_checkable
+class _PayloadPduPoller(Protocol):
+    """Structural interface shared by Session and Dispatcher: anything
+    that queues outgoing PDUs/payloads the same way can reuse
+    next_update_result() below for its update() return value."""
+    def poll_payload(self) -> bool: ...  #pylint: disable=missing-function-docstring
+    def poll_pdu(self) -> bool: ...  #pylint: disable=missing-function-docstring
+
+
+def next_update_result(poller: _PayloadPduPoller, next_deadline: float) -> Tuple[UpdateResult, float]:
+    """Pairs next_deadline with the UpdateResult reflecting what poller currently has queued.
+    Payload takes priority over PDU when both are ready, matching Session.update() and
+    Dispatcher.update(), the two callers this is shared between."""
+    if poller.poll_payload():
+        return UpdateResult.PAYLOAD_READY, next_deadline
+    if poller.poll_pdu():
+        return UpdateResult.PDU_READY, next_deadline
+    return UpdateResult.NOTHING_READY, next_deadline
+
+
 @dataclass
 class SessionConfig:
     """Configurable parameters for a Session instance."""
@@ -527,11 +547,7 @@ class Session:
             next_deadline = self._deadline
         else:
             next_deadline = now + self.config.retry_interval_seconds
-        if self.poll_payload():
-            return UpdateResult.PAYLOAD_READY, next_deadline
-        if self.poll_pdu():
-            return UpdateResult.PDU_READY, next_deadline
-        return UpdateResult.NOTHING_READY, next_deadline
+        return next_update_result(self, next_deadline)
 
     # -- internal: retry/timeout --------------------------------------------
 
