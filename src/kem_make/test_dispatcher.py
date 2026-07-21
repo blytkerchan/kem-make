@@ -649,3 +649,66 @@ def test_responder_session_with_unknown_claimed_identity_is_cleaned_up_immediate
         "message must be cleaned up immediately, not left stuck at INITIAL"
     )
     assert not bob_disp._candidates.candidates_for(cid)
+
+
+# ---------------------------------------------------------------------------
+# 9. _update_responder_sessions: both `self._candidates.discard(cid)` calls
+#    carried a "#HERE: this should cause a TypeError--unit test coverage?"
+#    comment, questioning whether `cid` (a uuid.UUID, not the `bytes` its
+#    type hint claims) actually works there. It does: CandidateStore.discard
+#    just does a dict pop, and dispatcher.py uses uuid.UUID as the key
+#    consistently everywhere it touches CandidateStore, so this is a stale
+#    type-hint/reality mismatch, not a live bug. Both branches below are
+#    otherwise unreachable through the public post_pdu()/update() surface
+#    on their own -- post_pdu() always drains a responder session's queue
+#    immediately via _deliver(), so by the time the periodic crank in
+#    _update_responder_sessions runs, there is normally nothing left
+#    queued for session.update() to reprocess or fail on. Reached here by
+#    reaching into the live SessionLayer directly, the same way a queued
+#    PDU that outlived its own delivery attempt would.
+# ---------------------------------------------------------------------------
+
+def test_update_responder_sessions_handshake_failure_does_not_raise_typeerror(parties):
+    from kem_make.bottom import SessionCompletionRequest, KemCiphertext, MLKEM_CT_LEN
+
+    bob_disp = Dispatcher(parties["bob_keys"])
+    alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"])
+    alice.initiate(parties["bob_kid"], now=0.0)
+    cid = alice.cid
+
+    bob_disp.post_pdu(alice.get_pdu(), now=0.0)
+    assert cid in bob_disp._responder_sessions
+    session = bob_disp._responder_sessions[cid]
+
+    # A structurally valid but forged SessionCompletionRequest: c_m won't
+    # decrypt under the real derived key, so processing it raises
+    # HandshakeFailed. Queued directly on the session (bypassing
+    # Dispatcher.post_pdu's own immediate _deliver()) so it's still
+    # sitting there, unprocessed, when the crank runs.
+    ct4 = KemCiphertext.build(b"\x11" * MLKEM_CT_LEN[768], level=768)
+    forged = SessionCompletionRequest({"c_m": b"not-a-real-ciphertext", "ct4": ct4, "n_a": b"n" * 16})
+    session.post_pdu(MakeMessage.build(cid, "session_completion_request", forged).dump())
+
+    bob_disp.update(now=0.0)  # must not raise TypeError (or anything else)
+
+    assert cid not in bob_disp._responder_sessions
+    assert not bob_disp._candidates.candidates_for(cid)
+
+
+def test_update_responder_sessions_ttl_drop_does_not_raise_typeerror(parties):
+    fast_config = SessionConfig(retry_interval_seconds=1.0, max_retries=1, ttl_seconds=5.0)
+    bob_disp = Dispatcher(parties["bob_keys"], config=fast_config)
+    alice = SessionLayer(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"], fast_config)
+    alice.initiate(parties["bob_kid"], now=0.0)
+    cid = alice.cid
+
+    bob_disp.post_pdu(alice.get_pdu(), now=0.0)
+    assert cid in bob_disp._responder_sessions
+
+    # Never completes; well past ttl_seconds=5.0 -- the responder's own
+    # SessionLayer._on_timeout() sets state=DROPPED (no retry for a
+    # responder, pure TTL), which the crank must then clean up.
+    bob_disp.update(now=100.0)  # must not raise TypeError (or anything else)
+
+    assert cid not in bob_disp._responder_sessions
+    assert not bob_disp._candidates.candidates_for(cid)

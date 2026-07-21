@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+import uuid
 
 
 DEFAULT_MAX_CANDIDATES_PER_CID = 3
@@ -193,7 +194,7 @@ class CandidateStore:
         removed = self._by_cid.pop(cid, [])
         self._total -= len(removed)
 
-    def discard(self, cid: bytes) -> None:
+    def discard(self, cid: uuid.UUID) -> None:
         """Discards every candidate for a cid without promoting any of
         them -- e.g. the handshake for this cid failed outright and no
         candidate should be retried or reconsidered."""

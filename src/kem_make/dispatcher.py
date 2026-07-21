@@ -300,7 +300,7 @@ class Dispatcher:
                 _, deadline = session.update(now)
             except (HandshakeFailed, UnexpectedPDU):
                 del self._responder_sessions[cid]
-                self._candidates.discard(cid) #HERE: this should cause a TypeError--unit test coverage?
+                self._candidates.discard(cid)
                 continue
             next_deadline = min(next_deadline, deadline)
             self._drain(session, cid)
@@ -308,7 +308,7 @@ class Dispatcher:
                 self._promote(cid, session)
             elif session.state is SessionState.DROPPED:
                 del self._responder_sessions[cid]
-                self._candidates.discard(cid) #HERE: this should cause a TypeError--unit test coverage?
+                self._candidates.discard(cid)
         return next_deadline
 
     def _update_established_sessions(self, now: float, next_deadline: float) -> float:
