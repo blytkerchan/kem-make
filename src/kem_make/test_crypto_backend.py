@@ -8,7 +8,7 @@ functional round trip.
 
 Run with: pytest test_crypto_backend.py -v
 """
-#pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines
+#pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, duplicate-code
 import runpy
 from unittest import mock
 

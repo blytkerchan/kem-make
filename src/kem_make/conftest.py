@@ -1,4 +1,4 @@
-#pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, protected-access, import-outside-toplevel
+#pylint: disable=missing-function-docstring, missing-module-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, protected-access, import-outside-toplevel, duplicate-code
 import pytest
 
 from cryptography.hazmat.primitives.asymmetric import mlkem

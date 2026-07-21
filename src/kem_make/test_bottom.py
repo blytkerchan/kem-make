@@ -33,7 +33,7 @@ Covers:
 
 Run with: pytest test_bottom.py -v
 """
-# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines
+# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, duplicate-code
 
 import hashlib
 import uuid

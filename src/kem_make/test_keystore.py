@@ -36,7 +36,7 @@ Covers:
 
 Run with: pytest test_keystore.py -v
 """
-# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, line-too-long, protected-access
+# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, line-too-long, protected-access, duplicate-code
 
 from unittest import mock
 

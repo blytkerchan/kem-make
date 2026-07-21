@@ -19,7 +19,7 @@ Covers:
 
 Run with: pytest test_dispatcher.py -v
 """
-# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, protected-access, import-outside-toplevel
+# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, protected-access, import-outside-toplevel, duplicate-code
 
 import pytest
 

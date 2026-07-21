@@ -36,7 +36,7 @@ Covers:
 
 Run with: pytest test_session.py -v
 """
-# pylint: disable=missing-function-docstring, redefined-outer-name, protected-access, too-many-statements, too-many-lines, multiple-statements
+# pylint: disable=missing-function-docstring, redefined-outer-name, protected-access, too-many-statements, too-many-lines, multiple-statements, duplicate-code
 
 import pytest
 
