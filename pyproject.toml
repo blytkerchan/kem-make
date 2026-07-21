@@ -39,6 +39,7 @@ dev = [
     "asn1tools==0.167.0",
     "pytest==9.1.1",
     "behave==1.3.3",
+    "coverage",
 ]
 
 [tool.setuptools.packages.find]
