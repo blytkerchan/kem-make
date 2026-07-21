@@ -64,7 +64,7 @@ from __future__ import annotations
 import uuid
 from typing import Dict, List, Optional, Tuple
 
-from .bottom import MakeMessage, NonCanonicalEncoding, InvalidCorrelationId
+from .bottom import MakeMessage
 from .candidate import CandidateStore, CandidateLimitExceeded
 from .session import (
     SessionLayer,
@@ -140,8 +140,14 @@ class Dispatcher:
         der_bytes = bytes(der_bytes)
         try:
             msg = MakeMessage.load(der_bytes)
-        except (NonCanonicalEncoding, InvalidCorrelationId):
-            return  # malformed input silently dropped, matching session.py
+        except ValueError:
+            # Malformed input silently dropped, matching session.py.
+            # ValueError, not just NonCanonicalEncoding/InvalidCorrelationId:
+            # those two are for input that DOES parse but fails a specific
+            # named check; input that doesn't even parse as a MakeMessage
+            # SEQUENCE raises a plain ValueError straight out of asn1crypto,
+            # and must be dropped the same way.
+            return
         cid = msg.correlation_id
         payload_name = msg["payload"].name
 

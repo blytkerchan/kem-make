@@ -692,3 +692,40 @@ def test_unexpected_pdu_type_for_state_raises(parties):
 
     with pytest.raises(UnexpectedPDU):
         alice.update(now=0.0)
+
+
+# ---------------------------------------------------------------------------
+# 10. Genuinely malformed (non-parseable) input is silently dropped, not
+#     just the two specific validation errors (NonCanonicalEncoding,
+#     InvalidCorrelationId) that _process_incoming's except clause used to
+#     name explicitly.
+# ---------------------------------------------------------------------------
+
+def test_garbage_bytes_are_silently_dropped_not_raised(parties):
+    # Bytes that don't even parse as a MakeMessage SEQUENCE raise a plain
+    # ValueError out of asn1crypto -- not NonCanonicalEncoding or
+    # InvalidCorrelationId, both of which are for input that DOES parse
+    # but fails a specific, named check. The module docstring's promise is
+    # "malformed input silently dropped", full stop, so this must not
+    # raise either.
+    alice, bob = parties["alice"], parties["bob"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+
+    bob.post_pdu(b"not a valid der blob at all")
+    bob.update(now=0.0)  # must not raise
+
+    assert bob.state == SessionState.INITIAL
+    assert not bob.poll_pdu()
+
+
+def test_garbage_bytes_mid_handshake_are_silently_dropped_not_raised(parties):
+    alice, bob = parties["alice"], parties["bob"]
+    alice.initiate(parties["bob_kid"], now=0.0)
+    bob.post_pdu(alice.get_pdu())
+    bob.update(now=0.0)
+
+    alice.post_pdu(b"\x00\x01\x02garbage, not a real SessionInitResponse")
+    alice.update(now=0.0)  # must not raise
+
+    assert alice.state == SessionState.EXPECT_SESSION_INIT_RESPONSE
+    assert not alice.poll_pdu()

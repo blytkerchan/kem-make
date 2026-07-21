@@ -94,8 +94,6 @@ from .bottom import (
     aead_name,
     MLKEM_OIDS,
     UnknownKemAlgorithm,
-    NonCanonicalEncoding,
-    InvalidCorrelationId,
     EmptyFalseStartPayload,
 )
 
@@ -524,8 +522,14 @@ class SessionLayer:
 
         try:
             msg = MakeMessage.load(der_bytes)
-        except (NonCanonicalEncoding, InvalidCorrelationId):
-            return  # malformed input is silently dropped, not an exception -- see module docstring
+        except ValueError:
+            # Malformed input is silently dropped, not an exception -- see
+            # module docstring. ValueError, not just NonCanonicalEncoding/
+            # InvalidCorrelationId: those two are for input that DOES parse
+            # but fails a specific named check; input that doesn't even
+            # parse as a MakeMessage SEQUENCE raises a plain ValueError
+            # straight out of asn1crypto, and must be dropped the same way.
+            return
 
         payload_name = msg["payload"].name
         incoming_cid = msg.correlation_id

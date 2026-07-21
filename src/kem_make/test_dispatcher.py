@@ -486,6 +486,23 @@ def test_post_pdu_silently_drops_non_canonical_der(parties):
     assert not alice_disp.poll_payload()
 
 
+def test_post_pdu_silently_drops_genuinely_malformed_bytes(parties):
+    # Bytes that don't even parse as a MakeMessage SEQUENCE raise a plain
+    # ValueError out of asn1crypto -- not NonCanonicalEncoding or
+    # InvalidCorrelationId, both of which are for input that DOES parse
+    # but fails a specific, named check. post_pdu's own docstring/comment
+    # promises malformed input is silently dropped, full stop.
+    alice_disp = Dispatcher(parties["alice_keys"])
+
+    alice_disp.post_pdu(b"not a valid der blob at all", now=0.0)  # must not raise
+
+    assert not alice_disp._established
+    assert not alice_disp._responder_sessions
+    assert not alice_disp._initiator_forks
+    assert not alice_disp.poll_pdu()
+    assert not alice_disp.poll_payload()
+
+
 def test_post_pdu_silently_drops_invalid_correlation_id(parties):
     from kem_make.bottom import SessionCompletionResponse
 
