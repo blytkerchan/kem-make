@@ -40,7 +40,6 @@ from cryptography.hazmat.primitives import hashes
 class CryptoBackendUnsupported(RuntimeError):
     """Raised when the installed cryptography backend can't do something
     KEM-MAKE's crypto layer needs, even though the package imported fine."""
-    pass
 
 
 # Levels actually usable by this crypto layer. 512 is intentionally absent --
