@@ -49,7 +49,7 @@ DEFAULT_CANDIDATE_TTL_SECONDS = 60.0
 
 
 class CandidateStoreError(Exception):
-    pass
+    """Base class for all exceptions raised by CandidateStore."""
 
 
 class CandidateLimitExceeded(CandidateStoreError):
@@ -59,7 +59,6 @@ class CandidateLimitExceeded(CandidateStoreError):
     since an attacker able to observe an error response learns their
     forgery attempt was noticed, for no benefit to the legitimate
     peer."""
-    pass
 
 
 @dataclass
@@ -81,9 +80,15 @@ class HandshakeCandidate:
     attempt_count: int = 0
 
     def is_expired(self, now: float) -> bool:
+        """Returns True if this candidate has passed its fixed TTL and should be discarded.
+        
+        Callers should sweep expired candidates from the store on every tick, and also
+        before adding a new candidate, to ensure that the store's limits are enforced
+        correctly."""
         return now >= self.expires_at
 
     def matches_received(self, pdu: bytes) -> bool:
+        """Returns True if the given PDU matches this candidate's received PDU."""
         return pdu == self.received_pdu
 
 
@@ -116,6 +121,7 @@ class CandidateStore:
     # -- queries -------------------------------------------------------
 
     def candidates_for(self, cid: bytes) -> List[HandshakeCandidate]:
+        """Returns a list of all candidates for the given cid, or an empty list if none exist."""
         return list(self._by_cid.get(cid, []))
 
     def match_or_none(self, cid: bytes, received_pdu: bytes) -> Optional[HandshakeCandidate]:
@@ -130,23 +136,30 @@ class CandidateStore:
         return None
 
     def total_count(self) -> int:
+        """Returns the total number of candidates across all cids."""
         return self._total
 
     # -- mutation --------------------------------------------------------
 
-    def add(self, cid: bytes, received_pdu: bytes, sent_pdu: bytes, now: float) -> HandshakeCandidate:
+    def add(
+        self,
+        cid: bytes,
+        received_pdu: bytes,
+        sent_pdu: bytes,
+        now: float,
+        ) -> HandshakeCandidate:
         """Adds a new candidate. Raises CandidateLimitExceeded, without
         adding anything, if this would exceed either the per-cid or the
         global cap -- callers must treat that as "drop the message that
         would have created this candidate," not as a reason to retry the
         add or to tell the peer anything."""
-        
-        # We're given the current time stamp, so let's garbage collect 
-        # any expired candidates before we check limits. This ensures 
+
+        # We're given the current time stamp, so let's garbage collect
+        # any expired candidates before we check limits. This ensures
         # that we don't reject a new candidate just because old ones
         # haven't been cleaned up yet.
         self.expire(now)
-        
+
         existing = self._by_cid.setdefault(cid, [])
         if len(existing) >= self._max_per_cid:
             raise CandidateLimitExceeded(
