@@ -9,7 +9,7 @@ Feature: Establishing a KEM-MAKE session
 
   Background:
     Given an initiator identity "alice" and a responder identity "bob", each knowing the other's public key
-    And an initiator SessionLayer "alice_layer" for "alice" and a responder SessionLayer "bob_layer" for "bob"
+    And an initiator Session "alice_layer" for "alice" and a responder Session "bob_layer" for "bob"
 
   Scenario: Initiating a handshake produces a session-init-request and no session id until then
     When "alice_layer" initiates a handshake with "bob"

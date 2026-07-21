@@ -19,15 +19,15 @@ using ONLY Bob's real static private key. A forger has no way to obtain
 that, regardless of which side of the exchange they're impersonating.
 So the responder side needs only the bounded-candidate-count and
 fixed-TTL protection CandidateStore already provides for a single
-SessionLayer per cid -- it does not need multiple competing SessionLayer
+Session per cid -- it does not need multiple competing Session
 instances the way the initiator side does. This module reflects that
-asymmetry: responder-side cid handling is a single SessionLayer, gated
+asymmetry: responder-side cid handling is a single Session, gated
 by CandidateStore's caps; initiator-side cid handling may fork into
-several concurrent SessionLayer candidates, arbitrated here.
+several concurrent Session candidates, arbitrated here.
 
 How forking works
 ------------------
-SessionLayer.fork() (see session.py) creates a sibling instance sharing
+Session.fork() (see session.py) creates a sibling instance sharing
 the pre-response handshake state (cid, ephemeral keypair, s1, peer
 identity) but with independent output queues, ready to process a
 DIFFERENT SessionInitResponse from scratch. Dispatcher keeps one
@@ -100,7 +100,7 @@ class Dispatcher:
 
         # Confirmed sessions, either role, one per cid.
         self._established: Dict[uuid.UUID, Session] = {}
-        # Responder side: at most one SessionLayer per pending cid --
+        # Responder side: at most one Session per pending cid --
         # see module docstring for why no arbitration is needed here.
         self._responder_sessions: Dict[uuid.UUID, Session] = {}
         # Initiator side: an untouched template to fork() from, plus the
@@ -242,12 +242,12 @@ class Dispatcher:
         and promotes the first fork (or responder session) that reaches
         ESTABLISHED for its cid, discarding all siblings immediately.
 
-        Returns (result, next_deadline) mirroring SessionLayer.update()'s
+        Returns (result, next_deadline) mirroring Session.update()'s
         own contract: result reflects whether anything is ready to poll
         across every session/fork this crank touched, and next_deadline
         is the earliest of every individual session/fork's own next
         deadline -- callers drive this the same way they'd drive a bare
-        SessionLayer, just at the multi-session level.
+        Session, just at the multi-session level.
         """
         self._candidates.expire(now)
         self._reconcile_expired_candidates()

@@ -32,7 +32,7 @@ arbitration (the DoS-mitigation concern: an unauthenticated first-flight
 PDU for a given cid may have more than one plausible responder in
 flight, since forging one requires only public keys). That arbitration
 is the job of an outer dispatcher that uses candidate.py's
-CandidateStore to bound how many concurrent SessionLayer instances may
+CandidateStore to bound how many concurrent Session instances may
 exist for one cid before any of them is cryptographically confirmed, and
 promotes exactly one (discarding its siblings) the moment proof arrives.
 This class is the thing that gets constructed once per candidate, and
@@ -227,13 +227,13 @@ def _decrypt( #pylint: disable=too-many-arguments,too-many-positional-arguments
 # ---------------------------------------------------------------------------
 
 class Role(enum.Enum):
-    """The two roles a SessionLayer may play in a handshake."""
+    """The two roles a Session may play in a handshake."""
     INITIATOR = "initiator"   # Alice
     RESPONDER = "responder"   # Bob
 
 
 class SessionState(enum.Enum):
-    """The states a SessionLayer may be in. The state machine is linear, with transitions following
+    """The states a Session may be in. The state machine is linear, with transitions following
     the handshake protocol."""
     INITIAL = "initial"
     EXPECT_SESSION_INIT_RESPONSE = "expect_session_init_response"           # initiator only
@@ -244,30 +244,30 @@ class SessionState(enum.Enum):
 
 
 class UpdateResult(enum.Enum):
-    """The possible results of calling update() on a SessionLayer."""
+    """The possible results of calling update() on a Session."""
     NOTHING_READY = "nothing_ready"
     PDU_READY = "pdu_ready"
     PAYLOAD_READY = "payload_ready"
     SESSION_DROPPED = "session_dropped"
 
 
-class SessionLayerError(Exception):
+class SessionError(Exception):
     """Base class for all exceptions this module raises."""
 
 
-class UnexpectedPDU(SessionLayerError):
+class UnexpectedPDU(SessionError):
     """A structurally valid MakeMessage arrived, but not one legal for the
     current (role, state)."""
 
 
-class HandshakeFailed(SessionLayerError):
+class HandshakeFailed(SessionError):
     """Raised when something that must be cryptographically true wasn't:
     an unknown claimed identity, no mutually acceptable AEAD, a
     decryption/h_m mismatch. Never causes any PDU to be sent -- see
     module docstring on wire-level errors."""
 
 
-class RetriesExhausted(SessionLayerError):
+class RetriesExhausted(SessionError):
     """Raised by update() when the configured retry budget is spent
     without a reply. The session moves to DROPPED; no PDU is sent."""
 
@@ -283,7 +283,7 @@ class KeyLookup(Protocol):
 
 @dataclass
 class SessionConfig:
-    """Configurable parameters for a SessionLayer instance."""
+    """Configurable parameters for a Session instance."""
     max_retries: int = 2                     # 2 retries => 3 total attempts
     retry_interval_seconds: float = 5.0
     ttl_seconds: float = 60.0                  # generous margin over the retry
@@ -406,12 +406,12 @@ class Session:
 
     def initiate(self, peer_key_id: KeyId, now: float) -> None:
         """Initiates a handshake with the given peer identity. Only valid for
-        an INITIATOR-role SessionLayer in the INITIAL state. Raises
-        SessionLayerError if called in any other state or role."""
+        an INITIATOR-role Session in the INITIAL state. Raises
+        SessionError if called in any other state or role."""
         if self.role is not Role.INITIATOR:
-            raise SessionLayerError("only an INITIATOR-role SessionLayer can initiate()")
+            raise SessionError("only an INITIATOR-role Session can initiate()")
         if self.state is not SessionState.INITIAL:
-            raise SessionLayerError(f"cannot initiate() from state {self.state}")
+            raise SessionError(f"cannot initiate() from state {self.state}")
 
         self.cid = uuid.uuid4()
         self._peer_key_id = peer_key_id
@@ -445,7 +445,7 @@ class Session:
         self.__init__(role, own_key_id, keys, config)  # type: ignore[misc] #pylint: disable=unnecessary-dunder-call
 
     def fork(self) -> "Session":
-        """Create a sibling SessionLayer sharing this instance's
+        """Create a sibling Session sharing this instance's
         pre-response handshake state (cid, own ephemeral keypair, s1,
         peer identity) but with its own independent output queues and
         response-processing state.
@@ -457,7 +457,7 @@ class Session:
         real responder's, plus zero or more forged ones -- forging one
         requires no private key, only public keys already on the wire;
         see dispatcher.py and rationale.md). Since session.py's current
-        design has a single SessionLayer own one linear state-machine
+        design has a single Session own one linear state-machine
         path, trying more than one candidate response means giving each
         one its own sibling instance that starts from the identical
         pre-response state and diverges from there.
@@ -475,9 +475,9 @@ class Session:
         first.
         """
         if self.role is not Role.INITIATOR:
-            raise SessionLayerError("only an INITIATOR-role SessionLayer can fork()")
+            raise SessionError("only an INITIATOR-role Session can fork()")
         if self.state is not SessionState.EXPECT_SESSION_INIT_RESPONSE:
-            raise SessionLayerError("fork() is only valid before a response has been processed")
+            raise SessionError("fork() is only valid before a response has been processed")
 
         twin = Session(self.role, self._own_key_id, self._keys, self.config)
         twin.state = SessionState.EXPECT_SESSION_INIT_RESPONSE

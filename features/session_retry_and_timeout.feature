@@ -12,7 +12,7 @@ Feature: Retry, timeout, and duplicate-PDU handling
   Background:
     Given an initiator identity "alice" and a responder identity "bob", each knowing the other's public key
     And a SessionConfig with 2 max retries, a 5 second retry interval, and a 20 second TTL
-    And an initiator SessionLayer "alice_layer" for "alice" using that config
+    And an initiator Session "alice_layer" for "alice" using that config
 
   Scenario: A timeout before any reply resends the exact same PDU bytes
     Given "alice_layer" initiates a handshake with "bob" at time 0
@@ -36,14 +36,14 @@ Feature: Retry, timeout, and duplicate-PDU handling
     Then at no point during that timeout sequence did dropping produce a PDU
 
   Scenario: A byte-identical duplicate incoming PDU produces the exact same reply
-    Given a responder SessionLayer "bob_layer" for "bob"
+    Given a responder Session "bob_layer" for "bob"
     And "alice_layer" initiates a handshake with "bob"
     When "bob_layer" receives "alice_layer"'s outgoing PDU
     And "bob_layer" receives the exact same PDU bytes again
     Then "bob_layer"'s two replies are byte-for-byte identical
 
   Scenario: Processing a duplicate PDU does not regenerate ephemeral key material
-    Given a responder SessionLayer "bob_layer" for "bob"
+    Given a responder Session "bob_layer" for "bob"
     And "alice_layer" initiates a handshake with "bob"
     When "bob_layer" receives "alice_layer"'s outgoing PDU
     And "bob_layer" receives the exact same PDU bytes again
@@ -51,7 +51,7 @@ Feature: Retry, timeout, and duplicate-PDU handling
     And "bob_layer"'s ephemeral key material is unchanged from the first time
 
   Scenario: The responder never retries -- its deadline is a pure TTL
-    Given a responder SessionLayer "bob_layer" for "bob" using that config
+    Given a responder Session "bob_layer" for "bob" using that config
     And "alice_layer" initiates a handshake with "bob" at time 0
     And "bob_layer" receives "alice_layer"'s outgoing PDU at time 0
     When time advances past the TTL and "bob_layer" is updated

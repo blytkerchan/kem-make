@@ -19,6 +19,7 @@ Covers:
 
 Run with: pytest test_dispatcher.py -v
 """
+# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines, protected-access, import-outside-toplevel
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import mlkem
@@ -99,7 +100,7 @@ def _forge_session_init_response(cid, bob_kid, alice_pub, aead="aes256-gcm"):
 
 
 def _run_bob(bob: Session, pdu: bytes, now: float):
-    """Feeds a PDU to a real Bob SessionLayer, tolerating (and reporting)
+    """Feeds a PDU to a real Bob Session, tolerating (and reporting)
     a HandshakeFailed the way a real deployment would -- Bob simply
     produces no reply for a candidate that doesn't decrypt correctly."""
     bob.post_pdu(pdu)
@@ -402,7 +403,7 @@ def test_update_returns_pdu_ready_when_something_is_queued(parties):
     alice_disp = Dispatcher(parties["alice_keys"])
     alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     # initiate() already queued the SessionInitRequest; update() should
-    # report it, matching SessionLayer.update()'s own contract.
+    # report it, matching Session.update()'s own contract.
     result, deadline = alice_disp.update(now=0.0)
     assert result == UpdateResult.PDU_READY
     assert deadline > 0.0
@@ -550,7 +551,7 @@ def test_post_pdu_delivers_to_an_already_established_session(parties):
     # AFTER its session for that cid reached ESTABLISHED -- so the
     # `if cid in self._established` branch at the very top of post_pdu was
     # never actually exercised. Complete a real handshake, then have Bob
-    # (a raw SessionLayer) send an application message back through
+    # (a raw Session) send an application message back through
     # alice_disp.post_pdu() the same way the false-start/payload tests do
     # it in the other direction.
     alice_disp = Dispatcher(parties["alice_keys"])
@@ -578,11 +579,11 @@ def test_post_pdu_delivers_to_an_already_established_session(parties):
 
 def test_post_pdu_routes_session_completion_request_to_an_existing_responder_session(parties):
     # None of the scenarios above ever run Bob's side THROUGH a Dispatcher
-    # -- Bob is always a raw SessionLayer -- so the
+    # -- Bob is always a raw Session -- so the
     # `if cid in self._responder_sessions` branch (reached for a
     # session_completion_request once a responder session already exists)
     # was never covered. Run the full handshake with Bob as a Dispatcher
-    # too, with Alice as a raw SessionLayer on the other side.
+    # too, with Alice as a raw Session on the other side.
     bob_disp = Dispatcher(parties["bob_keys"])
     alice = Session(Role.INITIATOR, parties["alice_kid"], parties["alice_keys"])
 
@@ -664,7 +665,7 @@ def test_responder_session_with_unknown_claimed_identity_is_cleaned_up_immediate
 #    immediately via _deliver(), so by the time the periodic crank in
 #    _update_responder_sessions runs, there is normally nothing left
 #    queued for session.update() to reprocess or fail on. Reached here by
-#    reaching into the live SessionLayer directly, the same way a queued
+#    reaching into the live Session directly, the same way a queued
 #    PDU that outlived its own delivery attempt would.
 # ---------------------------------------------------------------------------
 
@@ -706,7 +707,7 @@ def test_update_responder_sessions_ttl_drop_does_not_raise_typeerror(parties):
     assert cid in bob_disp._responder_sessions
 
     # Never completes; well past ttl_seconds=5.0 -- the responder's own
-    # SessionLayer._on_timeout() sets state=DROPPED (no retry for a
+    # Session._on_timeout() sets state=DROPPED (no retry for a
     # responder, pure TTL), which the crank must then clean up.
     bob_disp.update(now=100.0)  # must not raise TypeError (or anything else)
 

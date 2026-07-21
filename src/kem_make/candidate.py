@@ -30,7 +30,7 @@ without becoming a resource-exhaustion vector itself:
     duplicate costs nothing but a cache hit.
 
 This module does not itself do any cryptography, parse any PDU, or decide
-what "confirmed" means -- callers (SessionLayer, or whatever dispatcher
+what "confirmed" means -- callers (Session, or whatever dispatcher
 sits above it) hand it opaque received/sent byte strings and tell it when
 a candidate has been proven correspondent. Keeping this module free of
 protocol semantics is deliberate: the DoS-bounding logic here is the same
@@ -187,7 +187,7 @@ class CandidateStore:
         correspondence. Discards every sibling candidate for that cid
         immediately, including `winner` itself -- once a session is
         promoted out of the candidate pool, its bookkeeping moves to the
-        (now-confirmed) SessionLayer, not this store. Safe to call even
+        (now-confirmed) Session, not this store. Safe to call even
         if `winner` is not present (e.g. already expired and swept);
         the cid's remaining candidates are still discarded."""
         _ = winner # quench unused variable warning

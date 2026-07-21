@@ -335,13 +335,13 @@ the module docstring rather than silently left out.
 
 The mutually-authenticated handshake and established-session traffic
 from `main.pdf`, run on top of `bottom.py`'s wire structures as a
-transport-agnostic state machine. One `SessionLayer` instance is one
+transport-agnostic state machine. One `Session` instance is one
 handshake attempt for one `cid`, either role.
 
 ```python
-from kem_make.session import SessionLayer, Role
+from kem_make.session import Session, Role
 
-alice = SessionLayer(Role.INITIATOR, alice_key_id, key_lookup)
+alice = Session(Role.INITIATOR, alice_key_id, key_lookup)
 alice.initiate(bob_key_id, now=time.monotonic())
 wire_bytes = alice.get_pdu()          # send this over your transport
 
@@ -480,8 +480,7 @@ result, next_deadline = alice.update(now=time.monotonic())
   "Bob" instead leaves the forger permanently missing a different
   secret, for the same structural reason). So the responder side needs
   only `CandidateStore`'s existing per-`cid`/global caps for a *single*
-  `SessionLayer` per `cid` — all the real arbitration is on the
-  initiator side.
+  `Session` per `cid` — all the real arbitration is on the initiator side.
 - **`CandidateStore` is reused for both roles' first real
   response-generating step.** Responder: `(SessionInitRequest received,
   SessionInitResponse sent)`. Initiator: `(SessionInitResponse received,
@@ -491,9 +490,9 @@ result, next_deadline = alice.update(now=time.monotonic())
   instant any fork reaches `ESTABLISHED`, every sibling for that `cid`
   is discarded right there, not on the next `update()` tick, and not
   contingent on a losing candidate ever producing a reply.
-- **`update(now)` mirrors `SessionLayer`'s own `(result, next_deadline)`
+- **`update(now)` mirrors `Session`'s own `(result, next_deadline)`
   contract** rather than returning nothing, so a `Dispatcher` can be
-  driven the same way a bare `SessionLayer` can, just at the
+  driven the same way a bare `Session` can, just at the
   multi-session level.
 - **`close(cid)`** is the only way to release an established session —
   there's deliberately no idle-timeout or max-lifetime policy for
@@ -509,7 +508,7 @@ result, next_deadline = alice.update(now=time.monotonic())
 Verified end to end, not just unit-by-unit: a forged
 `SessionInitResponse`, built using only public information via the same
 encapsulation calls `session.py` itself uses (no shortcuts, no mocked
-crypto), racing against a real `SessionLayer`-driven Bob, in both
+crypto), racing against a real `Session`-driven Bob, in both
 arrival orders — forged-first and real-first both correctly end with
 Alice established with the real Bob, with the forged fork discarded, and
 the forger cannot complete the handshake even by actively trying to

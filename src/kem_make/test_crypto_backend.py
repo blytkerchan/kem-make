@@ -8,7 +8,7 @@ functional round trip.
 
 Run with: pytest test_crypto_backend.py -v
 """
-
+#pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines
 import runpy
 from unittest import mock
 
@@ -77,6 +77,7 @@ def test_check_backend_detects_mismatched_shared_secret():
 
 
 def test_aes_gcm_round_trip():
+    #pylint: disable=import-outside-toplevel
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     key = AESGCM.generate_key(bit_length=256)
     aesgcm = AESGCM(key)
@@ -86,6 +87,7 @@ def test_aes_gcm_round_trip():
 
 
 def test_chacha20_poly1305_round_trip():
+    #pylint: disable=import-outside-toplevel
     from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
     key = ChaCha20Poly1305.generate_key()
     chacha = ChaCha20Poly1305(key)
@@ -103,7 +105,7 @@ def test_chacha20_poly1305_round_trip():
 )
 def test_check_aead_passes_for_real_backends(cls, key_kwargs):
     # Must not raise for either AEAD this layer relies on.
-    cb._check_aead(cls.__name__, cls, key_kwargs)
+    cb._check_aead(cls.__name__, cls, key_kwargs) #pylint: disable=protected-access
 
 
 def test_check_aead_wraps_round_trip_exception():
@@ -119,7 +121,7 @@ def test_check_aead_wraps_round_trip_exception():
             raise NotImplementedError("simulated broken AEAD")
 
     with pytest.raises(cb.CryptoBackendUnsupported, match="fake-aead"):
-        cb._check_aead("fake-aead", BrokenAEAD, {})
+        cb._check_aead("fake-aead", BrokenAEAD, {}) #pylint: disable=protected-access
 
 
 def test_check_aead_detects_mismatched_plaintext():
@@ -135,13 +137,15 @@ def test_check_aead_detects_mismatched_plaintext():
             pass
 
         def encrypt(self, nonce, pt, aad):
+            #pylint: disable=unused-argument
             return b"ciphertext"
 
         def decrypt(self, nonce, ct, aad):
+            #pylint: disable=unused-argument
             return b"not-the-plaintext"
 
     with pytest.raises(cb.CryptoBackendUnsupported, match="mismatched plaintext"):
-        cb._check_aead("fake-aead", LyingAEAD, {})
+        cb._check_aead("fake-aead", LyingAEAD, {}) #pylint: disable=protected-access
 
 
 def test_check_aead_passes_key_kwargs_through_to_generate_key():
@@ -157,17 +161,20 @@ def test_check_aead_passes_key_kwargs_through_to_generate_key():
             pass
 
         def encrypt(self, nonce, pt, aad):
+            #pylint: disable=unused-argument
             return pt
 
         def decrypt(self, nonce, ct, aad):
+            #pylint: disable=unused-argument
             return ct
 
-    cb._check_aead("fake-aead", RecordingAEAD, {"bit_length": 256})
+    cb._check_aead("fake-aead", RecordingAEAD, {"bit_length": 256}) #pylint: disable=protected-access
 
     assert calls == [{"bit_length": 256}]
 
 
 def test_check_backend_detects_broken_aead():
+    #pylint: disable=import-outside-toplevel
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     with mock.patch.object(
@@ -178,6 +185,7 @@ def test_check_backend_detects_broken_aead():
 
 
 def test_hkdf_round_trip():
+    #pylint: disable=import-outside-toplevel
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives import hashes
 
@@ -192,7 +200,7 @@ def test_check_hkdf_wraps_round_trip_exception():
         side_effect=NotImplementedError("simulated broken HKDF"),
     ):
         with pytest.raises(cb.CryptoBackendUnsupported, match="HKDF-SHA256 failed"):
-            cb._check_hkdf()
+            cb._check_hkdf() #pylint: disable=protected-access
 
 
 def test_check_hkdf_detects_wrong_output_length():
@@ -201,13 +209,14 @@ def test_check_hkdf_detects_wrong_output_length():
             cb.CryptoBackendUnsupported,
             match=r"HKDF-SHA256 returned 16 bytes, expected 32",
         ):
-            cb._check_hkdf()
+            cb._check_hkdf() #pylint: disable=protected-access
 
 
 def test_mlkem_ciphertext_and_key_sizes_match_fips_203_table_3():
     # Cross-check against the same constants kem_make.py relies on, so a
     # future cryptography release that changes behaviour is caught here
     # rather than only inside a live handshake.
+    #pylint: disable=import-outside-toplevel
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     from kem_make.bottom import MLKEM_CT_LEN, MLKEM_PK_LEN
 

@@ -10,7 +10,7 @@ Feature: Rejecting forged and unauthenticated handshake messages
 
   Background:
     Given an initiator identity "alice" and a responder identity "bob", each knowing the other's public key
-    And an initiator SessionLayer "alice_layer" for "alice" and a responder SessionLayer "bob_layer" for "bob"
+    And an initiator Session "alice_layer" for "alice" and a responder Session "bob_layer" for "bob"
 
   Scenario: A forged session-completion-request built with only public keys is rejected
     # Mallory can build a structurally valid SessionCompletionRequest
@@ -32,7 +32,7 @@ Feature: Rejecting forged and unauthenticated handshake messages
 
   Scenario: A session-init-request claiming an identity the responder doesn't recognize is rejected
     Given a stranger identity "mallory" unknown to "bob"
-    And an initiator SessionLayer "mallory_layer" for "mallory"
+    And an initiator Session "mallory_layer" for "mallory"
     When "mallory_layer" initiates a handshake with "bob"
     And "bob_layer" receives "mallory_layer"'s outgoing PDU
     Then processing that PDU fails with HandshakeFailed

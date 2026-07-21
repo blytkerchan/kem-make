@@ -14,13 +14,13 @@ Covers:
 
 Run with: pytest test_candidate.py -v
 """
+# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines
 
 import pytest
 
 from kem_make.candidate import (
     CandidateStore,
     CandidateLimitExceeded,
-    HandshakeCandidate,
 )
 
 
@@ -51,12 +51,12 @@ def test_promote_discards_all_candidates_for_that_cid():
     store = CandidateStore()
     cid = _cid(1)
     c1 = store.add(cid, b"received-1", b"sent-1", now=0.0)
-    c2 = store.add(cid, b"received-2", b"sent-2", now=0.0)
+    _ = store.add(cid, b"received-2", b"sent-2", now=0.0)
     assert store.total_count() == 2
 
     store.promote(cid, c1)
 
-    assert store.candidates_for(cid) == []
+    assert not store.candidates_for(cid)
     assert store.total_count() == 0
     assert store.match_or_none(cid, b"received-1") is None
     assert store.match_or_none(cid, b"received-2") is None
@@ -70,7 +70,7 @@ def test_discard_removes_all_candidates_without_requiring_a_winner():
 
     store.discard(cid)
 
-    assert store.candidates_for(cid) == []
+    assert not store.candidates_for(cid)
     assert store.total_count() == 0
 
 
@@ -150,7 +150,7 @@ def test_expire_removes_only_past_ttl_candidates():
     removed = store.expire(now=12.0)
 
     assert removed == 1
-    assert store.candidates_for(cid_old) == []
+    assert not store.candidates_for(cid_old)
     assert len(store.candidates_for(cid_new)) == 1
     assert store.total_count() == 1
 

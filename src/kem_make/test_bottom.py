@@ -33,11 +33,14 @@ Covers:
 
 Run with: pytest test_bottom.py -v
 """
+# pylint: disable=missing-function-docstring, missing-class-docstring, redefined-outer-name, too-many-locals, too-many-statements, too-many-lines
 
+import hashlib
 import uuid
 
 import pytest
 from asn1crypto.core import Sequence, OctetString
+from asn1crypto.algos import AlgorithmIdentifier
 
 from .bottom import (
     KemPublicKey,
@@ -151,7 +154,6 @@ def test_kem_public_key_load_rejects_truncated_key():
 
 
 def test_kem_public_key_load_rejects_unknown_oid():
-    from asn1crypto.algos import AlgorithmIdentifier
     bogus = KemPublicKey({
         "algorithm": AlgorithmIdentifier({"algorithm": "1.2.3.4.5"}),
         "public_key": b"\x00" * MLKEM_PK_LEN[768],
@@ -165,8 +167,6 @@ def test_kem_public_key_load_rejects_unknown_oid():
 # ---------------------------------------------------------------------------
 
 def test_key_id_hashes_whole_structure_not_raw_key():
-    import hashlib
-
     pk = _pk()
     key_id = KeyId.build(pk)
 
@@ -181,7 +181,6 @@ def test_key_id_changes_if_algorithm_differs_but_key_bytes_same():
     raw = b"\x00" * MLKEM_PK_LEN[768]
     pk_768 = KemPublicKey.build(raw, level=768)
 
-    from asn1crypto.algos import AlgorithmIdentifier
     pk_relabeled = KemPublicKey({
         "algorithm": AlgorithmIdentifier({"algorithm": MLKEM_OIDS[1024]}),
         "public_key": raw,  # same bytes, different (bogus) algorithm label
@@ -213,6 +212,7 @@ def test_make_message_load_rejects_short_cid():
 
 
 def test_make_message_build_rejects_short_cid_via_manual_construction():
+    #pylint: disable=protected-access
     with pytest.raises(InvalidCorrelationId):
         MakeMessage({
             "version": 0,

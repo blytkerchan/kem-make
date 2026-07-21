@@ -4,14 +4,14 @@ Tests for kem_make.session.
 Covers:
   1. Crypto primitives in isolation (KEM round trip, HKDF key derivation,
      AEAD round trip) before trusting anything built on top of them.
-  2. A full end-to-end handshake between two real SessionLayer instances,
+  2. A full end-to-end handshake between two real Session instances,
      with real ML-KEM-768, real HKDF, real AEAD -- not mocked.
   3. False-start payload delivery in both directions.
   4. Established-session Message traffic in both directions, including a
      regression case for a real bug caught while writing these tests: an
      unconsumed payload sitting in the output queue makes a *later*,
      unrelated get_payload() call return the stale one instead of the
-     new one -- not a SessionLayer bug, but a sharp edge worth a test so
+     new one -- not a Session bug, but a sharp edge worth a test so
      nobody rediscovers it as a mystery down the line.
   5. Retry: exact-byte resend on timeout, exhausting the retry budget
      drops the session, and a duplicate incoming PDU triggers a resend
@@ -47,7 +47,7 @@ from kem_make.session import (
     SessionState,
     UpdateResult,
     SessionConfig,
-    SessionLayerError,
+    SessionError,
     UnexpectedPDU,
     HandshakeFailed,
     derive_session_keys,
@@ -292,10 +292,10 @@ def test_established_message_sequence_increments(parties):
 
 def test_get_payload_drains_in_fifo_order_regression():
     # Regression test for a real bug caught while writing these tests --
-    # not in SessionLayer itself, but a sharp edge worth guarding: an
+    # not in Session itself, but a sharp edge worth guarding: an
     # unconsumed payload left in the queue makes a later, unrelated
     # get_payload() call return the STALE one instead of the new one.
-    # This isn't something SessionLayer can fix (the caller owns when it
+    # This isn't something Session can fix (the caller owns when it
     # consumes output), but it must behave in a predictable FIFO order so
     # a caller that *does* drain promptly gets correct behavior.
     alice_priv, alice_pub, alice_kid = _make_identity()
@@ -651,7 +651,7 @@ def test_fork_processes_a_response_independently_of_its_source(parties):
 
 def test_fork_raises_for_responder_role(parties):
     bob = parties["bob"]
-    with pytest.raises(SessionLayerError):
+    with pytest.raises(SessionError):
         bob.fork()
 
 
@@ -663,7 +663,7 @@ def test_fork_raises_before_initiate_has_been_called():
     keys.add(bob_kid, bob_pub)
 
     fresh = Session(Role.INITIATOR, alice_kid, keys)
-    with pytest.raises(SessionLayerError):
+    with pytest.raises(SessionError):
         fresh.fork()
 
 
@@ -676,7 +676,7 @@ def test_fork_raises_after_a_response_has_already_been_processed(parties):
     alice.update(now=0.0)
     assert alice.state == SessionState.EXPECT_SESSION_COMPLETION_RESPONSE
 
-    with pytest.raises(SessionLayerError):
+    with pytest.raises(SessionError):
         alice.fork()
 
 
