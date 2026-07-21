@@ -202,43 +202,38 @@ _WRAP_ALGORITHM_OID = "2.16.840.1.101.3.4.1.48"  # id-aes256-wrap-pad, RFC 5649
 
 class KeyDirectoryError(Exception):
     """Base class for all errors this module raises directly."""
-    pass
 
 
 class WrongPassphrase(KeyDirectoryError):
     """Raised when the supplied passphrase does not match the key
     directory's stored verification tag. Deliberately carries no detail
     beyond this -- not the derived key, not the expected tag."""
-    pass
 
 
 class KeyNotFound(KeyDirectoryError):
-    pass
+    """Raised when a requested key is not present in the directory."""
 
 
 class DuplicateKey(KeyDirectoryError):
-    pass
+    """Raised when an attempt is made to add a key that already exists in the directory."""
 
 
 class PrivateKeyRequiresPublicKey(KeyDirectoryError):
     """Raised when add_private_key() is called for a public key that was
     never added with add_public_key() -- private keys are always linked
     to a registered public key entry, never stored standalone."""
-    pass
 
 
 class PrivateKeyUnwrapFailed(KeyDirectoryError):
     """Raised when AES-KW unwrap fails integrity verification -- either
     the stored entry was tampered with, or (should not happen once
     open() has already verified the passphrase) the wrong KEK was used."""
-    pass
 
 
 class PublicKeyIntegrityError(KeyDirectoryError):
     """Raised when a stored public key entry's MAC does not verify --
     the entry was edited, replaced, or swapped with a different entry's
     file on disk since it was written."""
-    pass
 
 
 class AltIndexIntegrityError(KeyDirectoryError):
@@ -250,15 +245,13 @@ class AltIndexIntegrityError(KeyDirectoryError):
     requested KeyId. This MAC is defense in depth against a corrupted
     index causing lookups to silently (and confusingly) miss, not the
     only thing preventing a wrong-key substitution."""
-    pass
 
 
 def _zero(buf: bytearray) -> None:
     """Best-effort overwrite of a mutable buffer's contents with zero
     bytes. See module docstring's side-channel notes for what this does
     and does not guarantee."""
-    for i in range(len(buf)):
-        buf[i] = 0
+    buf[:] = b'\x00' * len(buf)
 
 
 def _key_hash_equal(a: bytes, b: bytes) -> bool:
@@ -295,12 +288,22 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
 
 
 def _derive_master_key(passphrase: bytes, salt: bytes, iterations: int) -> bytearray:
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=MASTER_KEY_LEN, salt=salt, iterations=iterations)
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=MASTER_KEY_LEN,
+        salt=salt,
+        iterations=iterations,
+        )
     return bytearray(kdf.derive(passphrase))
 
 
 def _derive_kek(master_key: bytes, salt: bytes, key_identity: bytes) -> bytearray:
-    hkdf = HKDF(algorithm=hashes.SHA256(), length=KEK_LEN, salt=salt, info=_DOMAIN_KEK + key_identity)
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=KEK_LEN,
+        salt=salt,
+        info=_DOMAIN_KEK + key_identity,
+        )
     return bytearray(hkdf.derive(bytes(master_key)))
 
 
@@ -313,7 +316,12 @@ def _derive_public_key_mac_key(master_key: bytes, salt: bytes, hex_id: str) -> b
 
 
 def _derive_alt_index_mac_key(master_key: bytes, salt: bytes) -> bytearray:
-    hkdf = HKDF(algorithm=hashes.SHA256(), length=MAC_KEY_LEN, salt=salt, info=_DOMAIN_ALT_INDEX_MAC)
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=MAC_KEY_LEN,
+        salt=salt,
+        info=_DOMAIN_ALT_INDEX_MAC,
+        )
     return bytearray(hkdf.derive(bytes(master_key)))
 
 
@@ -331,10 +339,13 @@ def _derive_check_tag(master_key: bytes, header_salt: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 class KeyIdList(SequenceOf):
+    """A list of KeyId objects, used to cache alternate-hash KeyIds on a public key entry."""
     _child_spec = KeyId
 
 
 class KeystoreHeader(Sequence):
+    """The unencrypted header.der file at the root of a key directory, containing metadata about
+    the keystore."""
     _fields = [
         ("version", Integer, {"default": 0}),
         ("kdf_salt", OctetString),
@@ -343,13 +354,15 @@ class KeystoreHeader(Sequence):
     ]
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict: bool = True, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
         return obj
 
 
 class PublicKeyEntryData(Sequence):
+    """The unencrypted data portion of a StoredPublicKeyEntry, containing the public key and its 
+    cached KeyIds."""
     _fields = [
         ("public_key", KemPublicKey),
         ("key_ids", KeyIdList),
@@ -357,6 +370,7 @@ class PublicKeyEntryData(Sequence):
 
 
 class StoredPublicKeyEntry(Sequence):
+    """A public key entry stored on disk, with HMAC-SHA256 protection."""
     # data is HMAC-SHA256-protected (see KeyDirectory._mac_public_key_data)
     # so that swapping, editing, or replacing a public key entry on disk
     # is detected rather than silently trusted. The MAC key is derived
@@ -371,13 +385,15 @@ class StoredPublicKeyEntry(Sequence):
     ]
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
         return obj
 
 
 class StoredPrivateKeyEntry(Sequence):
+    """A private key entry stored on disk, with AES-256 Key Wrap with Padding (RFC 5649)
+    protection."""
     _fields = [
         ("key_id", KeyId),               # primary (SHA-256) reference
         ("kek_salt", OctetString),
@@ -386,30 +402,35 @@ class StoredPrivateKeyEntry(Sequence):
     ]
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
         return obj
 
 
 class AltIndexEntry(Sequence):
+    """An entry in alt_index.der, mapping an alternate-hash KeyId to the primary (SHA-256)
+    filename."""
     _fields = [
         ("key_id", KeyId),                # the alternate-hash KeyId
         ("primary_hex", OctetString),      # ascii hex of the primary sha256 hash, as bytes
     ]
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
         return obj
 
 
 class AltIndex(SequenceOf):
+    """A list of AltIndexEntry objects, used to map alternate-hash KeyIds to primary filenames."""
     _child_spec = AltIndexEntry
 
 
 class AltIndexFile(Sequence):
+    """The on-disk alt_index.der file, containing a list of AltIndexEntry objects and an
+    HMAC-SHA256 tag for integrity protection."""
     # Same MAC treatment as StoredPublicKeyEntry, and for the same
     # reason: alt_index.der is a cache mapping alternate-hash KeyIds to a
     # primary filename, and a corrupted or attacker-edited mapping could
@@ -428,8 +449,8 @@ class AltIndexFile(Sequence):
     ]
 
     @classmethod
-    def load(cls, encoded_data, **kwargs):
-        obj = super().load(encoded_data, **kwargs)
+    def load(cls, encoded_data, strict=False, **kwargs):
+        obj = super().load(encoded_data, strict=strict, **kwargs)
         _require_der(cls, encoded_data, obj)
         return obj
 
@@ -439,6 +460,10 @@ class AltIndexFile(Sequence):
 # ---------------------------------------------------------------------------
 
 class KeyDirectory:
+    """A key directory on disk, containing public and private keys with integrity and
+    confidentiality protection. Use KeyDirectory.create() to create a new directory,
+    or KeyDirectory.open() to open an existing one. Use the context manager protocol
+    (with statement) to ensure the master key is zeroed on close."""
     def __init__(self, path: Path, master_key: bytearray):
         self._path = path
         self._master_key = master_key  # bytearray; zeroed on close()
@@ -446,7 +471,14 @@ class KeyDirectory:
     # -- lifecycle -----------------------------------------------------
 
     @classmethod
-    def create(cls, path, passphrase: bytes, iterations: int = DEFAULT_PBKDF2_ITERATIONS) -> "KeyDirectory":
+    def create(
+        cls,
+        path,
+        passphrase: bytes,
+        iterations: int = DEFAULT_PBKDF2_ITERATIONS,
+        ) -> "KeyDirectory":
+        """Create a new key directory at the given path, deriving the master key from the given
+        passphrase."""
         path = Path(path)
         if path.exists() and any(path.iterdir()):
             raise KeyDirectoryError(f"{path} already exists and is not empty")
@@ -472,7 +504,9 @@ class KeyDirectory:
         return cls(path, master_key)
 
     @classmethod
-    def open(cls, path, passphrase: bytes) -> "KeyDirectory":
+    def open(cls, path: str | Path, passphrase: bytes) -> "KeyDirectory":
+        """Open an existing key directory at the given path, deriving the master key from the
+        given passphrase and verifying it against the stored verification tag."""
         path = Path(path)
         header_path = path / "header.der"
         if not header_path.exists():
@@ -493,6 +527,8 @@ class KeyDirectory:
         return cls(path, master_key)
 
     def close(self) -> None:
+        """Zero the master key in memory. After this, the KeyDirectory instance should not be used
+        again."""
         _zero(self._master_key)
 
     def __enter__(self) -> "KeyDirectory":
@@ -533,12 +569,20 @@ class KeyDirectory:
         finally:
             _zero(mac_key)
 
-    def _build_stored_public_key_entry(self, data: "PublicKeyEntryData", hex_id: str) -> "StoredPublicKeyEntry":
+    def _build_stored_public_key_entry(
+        self,
+        data: "PublicKeyEntryData",
+        hex_id: str,
+        ) -> "StoredPublicKeyEntry":
         salt = os.urandom(MAC_SALT_LEN)
         tag = self._mac_public_key_data(data, salt, hex_id)
         return StoredPublicKeyEntry({"data": data, "mac_salt": salt, "mac_tag": tag})
 
-    def _verify_and_get_data(self, stored: "StoredPublicKeyEntry", hex_id: str) -> "PublicKeyEntryData":
+    def _verify_and_get_data(
+        self,
+        stored: "StoredPublicKeyEntry",
+        hex_id: str,
+        ) -> "PublicKeyEntryData":
         expected_tag = self._mac_public_key_data(stored["data"], stored["mac_salt"].native, hex_id)
         actual_tag = stored["mac_tag"].native
         if not hmac.compare_digest(actual_tag, expected_tag):
@@ -552,6 +596,8 @@ class KeyDirectory:
     # -- public keys -------------------------------------------------------
 
     def add_public_key(self, public_key: KemPublicKey) -> KeyId:
+        """Add a public key to the directory, returning its primary (SHA-256) KeyId. Raises
+        DuplicateKey if the key is already present."""
         primary = self._primary_key_id(public_key)
         hex_id = self._hex_of(primary)
         path = self._public_path(hex_id)
@@ -567,6 +613,8 @@ class KeyDirectory:
         return primary
 
     def get_public_key(self, key_id: KeyId) -> KemPublicKey:
+        """Retrieve the public key corresponding to the given KeyId. Raises PublicKeyIntegrityError
+        if the entry's MAC does not verify."""
         data = self._load_public_entry_by_key_id(key_id)
         return data["public_key"]
 
@@ -693,6 +741,9 @@ class KeyDirectory:
     # -- private keys --------------------------------------------------
 
     def add_private_key(self, public_key: KemPublicKey, private_key_bytes: bytes) -> KeyId:
+        """Add a private key to the directory, returning its primary (SHA-256) KeyId. Raises
+        PrivateKeyRequiresPublicKey if the corresponding public key is not registered, or
+        DuplicateKey if the private key is already present."""
         primary = self._primary_key_id(public_key)
         hex_id = self._hex_of(primary)
 
