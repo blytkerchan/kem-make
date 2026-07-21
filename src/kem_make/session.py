@@ -356,6 +356,20 @@ class SessionLayer:
     def get_payload(self) -> bytes:
         return self._outgoing_payloads.pop(0)
 
+    def get_last_sent(self) -> Optional[bytes]:
+        """Returns the last PDU this instance sent, or None if it has never
+        sent anything. This is useful for testing and logging, but not
+        needed for normal operation: the caller can always capture the
+        bytes returned from get_pdu() instead."""
+        return self._last_sent
+    
+    def get_last_received(self) -> Optional[bytes]:
+        """Returns the last PDU this instance accepted, or None if it has
+        never accepted anything. This is useful for testing and logging,
+        but not needed for normal operation: the caller can always capture
+        the bytes passed to post_pdu() instead."""
+        return self._last_received
+
     # -- public: lifecycle -------------------------------------------------
 
     def initiate(self, peer_key_id: KeyId, now: float) -> None:

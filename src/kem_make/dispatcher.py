@@ -72,7 +72,6 @@ from .session import (
     SessionState,
     UpdateResult,
     SessionConfig,
-    SessionLayerError,
     HandshakeFailed,
     UnexpectedPDU,
     KeyLookup,
@@ -81,10 +80,14 @@ from .session import (
 
 
 class DispatcherError(Exception):
-    pass
+    """Raised for any error in the Dispatcher itself."""
 
 
 class Dispatcher:
+    """
+    Multi-candidate arbitration for the Mallory scenario."""
+    #pylint: disable=too-many-instance-attributes
+
     def __init__(
         self,
         key_lookup: KeyLookup,
@@ -111,6 +114,9 @@ class Dispatcher:
     # -- initiating a handshake ---------------------------------------------
 
     def initiate(self, own_key_id: KeyId, peer_key_id: KeyId, now: float) -> uuid.UUID:
+        """Starts a new handshake as an initiator, returning the cid to
+        use for all subsequent PDUs in this handshake. The returned cid
+        is unique to this handshake."""
         primary = SessionLayer(Role.INITIATOR, own_key_id, self._keys, self.config)
         primary.initiate(peer_key_id, now)
         cid = primary.cid
@@ -129,6 +135,8 @@ class Dispatcher:
     # -- push in --------------------------------------------------------
 
     def post_pdu(self, der_bytes: bytes, now: float) -> None:
+        """Processes an incoming PDU, routing it to the appropriate session layer based on its
+        correlation ID."""
         der_bytes = bytes(der_bytes)
         try:
             msg = MakeMessage.load(der_bytes)
@@ -165,6 +173,8 @@ class Dispatcher:
         # nothing to route to. Silently dropped.
 
     def post_payload(self, cid: uuid.UUID, payload: bytes) -> None:
+        """Posts an application payload to the established session for the given cid.
+        Raises DispatcherError if no such session exists."""
         if cid in self._established:
             self._established[cid].post_payload(payload)
             return
@@ -185,15 +195,21 @@ class Dispatcher:
     # -- pull out ---------------------------------------------------------
 
     def poll_pdu(self) -> bool:
+        """Returns True if there are any outgoing PDUs queued, False otherwise."""
         return len(self._outgoing_pdus) > 0
 
     def get_pdu(self) -> bytes:
+        """Returns the next outgoing PDU, removing it from the queue.
+        Raises IndexError if none are queued."""
         return self._outgoing_pdus.pop(0)
 
     def poll_payload(self) -> bool:
+        """Returns True if there are any outgoing application payloads queued, False otherwise."""
         return len(self._outgoing_payloads) > 0
 
     def get_payload(self) -> Tuple[uuid.UUID, bytes]:
+        """Returns the next outgoing application payload, removing it from the queue.
+        Raises IndexError if none are queued."""
         return self._outgoing_payloads.pop(0)
 
     def close(self, cid: uuid.UUID) -> None:
@@ -322,7 +338,7 @@ class Dispatcher:
         if session.state is SessionState.EXPECT_SESSION_COMPLETION_REQUEST:
             entries = self._candidates.candidates_for(cid)
             if entries:
-                entries[0].sent_pdu = session._last_sent or b""
+                entries[0].sent_pdu = session.get_last_sent() or b""
         self._reap_responder(cid)
 
     def _route_session_init_response(self, cid: uuid.UUID, der_bytes: bytes, now: float) -> None:
@@ -330,7 +346,7 @@ class Dispatcher:
             return  # not a cid we initiated; nothing to fork from
 
         for fork in self._initiator_forks.get(cid, []):
-            if fork._last_received == der_bytes:
+            if fork.get_last_received() == der_bytes:
                 self._deliver(fork, der_bytes, now, cid)
                 return  # exact duplicate of an already-tried candidate
 
@@ -345,7 +361,7 @@ class Dispatcher:
         entries = self._candidates.candidates_for(cid)
         for entry in entries:
             if entry.received_pdu == der_bytes:
-                entry.sent_pdu = new_fork._last_sent or b""
+                entry.sent_pdu = new_fork.get_last_sent() or b""
 
     def _route_to_forks(self, cid: uuid.UUID, der_bytes: bytes, now: float) -> None:
         for fork in list(self._initiator_forks.get(cid, [])):
