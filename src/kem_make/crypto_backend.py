@@ -49,6 +49,18 @@ MLKEM_BACKEND_CLASSES = {
     1024: mlkem.MLKEM1024PrivateKey,
 }
 
+AEAD_BACKEND_CLASSES = {
+    "AES-256-GCM": AESGCM,
+    "ChaCha20-Poly1305": ChaCha20Poly1305,
+}
+
+HKDF_BACKEND_PROFILES = {
+    "HKDF-SHA256": {
+        "algorithm": hashes.SHA256(),
+        "length": 32,
+    },
+}
+
 
 def _check_mlkem(level: int, private_key_cls) -> None:
     try:
@@ -92,9 +104,13 @@ def _check_aead(name: str, cls, key_kwargs: dict) -> None:
         )
 
 
-def _check_hkdf() -> None:
+def _check_hkdf(profile) -> None:
     try:
-        hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"capability-check")
+        hkdf = HKDF(
+            **HKDF_BACKEND_PROFILES[profile],
+            salt=None,
+            info=b"capability-check",
+            )
         derived = hkdf.derive(b"\x00" * 32)
     except Exception as e:
         raise CryptoBackendUnsupported(f"HKDF-SHA256 failed on this backend: {e!r}") from e
@@ -117,10 +133,11 @@ def check_backend() -> None:
     for level, cls in MLKEM_BACKEND_CLASSES.items():
         _check_mlkem(level, cls)
 
-    _check_aead("AES-256-GCM", AESGCM, {"bit_length": 256})
-    _check_aead("ChaCha20-Poly1305", ChaCha20Poly1305, {})
+    for algorithm, cls in AEAD_BACKEND_CLASSES.items():
+        key_kwargs = {"bit_length": 256} if algorithm == "AES-256-GCM" else {}
+        _check_aead(algorithm, cls, key_kwargs)
 
-    _check_hkdf()
+    _check_hkdf("HKDF-SHA256")
 
 
 if __name__ == "__main__":
