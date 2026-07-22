@@ -200,7 +200,7 @@ def test_check_hkdf_wraps_round_trip_exception():
         side_effect=NotImplementedError("simulated broken HKDF"),
     ):
         with pytest.raises(cb.CryptoBackendUnsupported, match="HKDF-SHA256 failed"):
-            cb._check_hkdf() #pylint: disable=protected-access
+            cb._check_hkdf("HKDF-SHA256") #pylint: disable=protected-access
 
 
 def test_check_hkdf_detects_wrong_output_length():
@@ -209,7 +209,7 @@ def test_check_hkdf_detects_wrong_output_length():
             cb.CryptoBackendUnsupported,
             match=r"HKDF-SHA256 returned 16 bytes, expected 32",
         ):
-            cb._check_hkdf() #pylint: disable=protected-access
+            cb._check_hkdf("HKDF-SHA256") #pylint: disable=protected-access
 
 
 def test_mlkem_ciphertext_and_key_sizes_match_fips_203_table_3():
