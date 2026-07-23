@@ -532,6 +532,39 @@ def test_tampered_wrapped_key_is_rejected(tmp_path):
         kd.get_private_key(key_id)
 
 
+def test_swapping_two_private_key_entries_between_filenames_is_detected(tmp_path):
+    # Both files are individually well-formed, internally-consistent
+    # entries for their ORIGINAL identity -- get_private_key() derives
+    # the KEK from the key_id embedded *in the file*, not the requested
+    # identity, so if it didn't also check the two agree, this swap
+    # would go undetected and silently return the wrong identity's
+    # private key (an attacker who can write files can rename/swap
+    # them, exactly as in the analogous public-key swap test above).
+    from kem_make.keystore import PrivateKeyUnwrapFailed #pylint: disable=import-outside-toplevel, reimported
+
+    pk1 = _pk(fill=b"\x11")
+    pk2 = _pk(fill=b"\x22")
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    kid1 = kd.add_public_key(pk1)
+    kid2 = kd.add_public_key(pk2)
+    kd.add_private_key(pk1, b"a" * 32)
+    kd.add_private_key(pk2, b"b" * 32)
+
+    path1 = kd._private_path(kd._hex_of(kid1))
+    path2 = kd._private_path(kd._hex_of(kid2))
+    bytes1 = path1.read_bytes()
+    bytes2 = path2.read_bytes()
+
+    # Swap the file *contents* between the two filenames.
+    path1.write_bytes(bytes2)
+    path2.write_bytes(bytes1)
+
+    with pytest.raises(PrivateKeyUnwrapFailed):
+        kd.get_private_key(kid1)
+    with pytest.raises(PrivateKeyUnwrapFailed):
+        kd.get_private_key(kid2)
+
+
 # ---------------------------------------------------------------------------
 # 15. Public key entries are MAC-protected against on-disk tampering
 # ---------------------------------------------------------------------------

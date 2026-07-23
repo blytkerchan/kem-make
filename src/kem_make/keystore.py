@@ -227,9 +227,12 @@ class PrivateKeyRequiresPublicKey(KeyDirectoryError):
 
 
 class PrivateKeyUnwrapFailed(KeyDirectoryError):
-    """Raised when AES-KW unwrap fails integrity verification -- either
-    the stored entry was tampered with, or (should not happen once
-    open() has already verified the passphrase) the wrong KEK was used."""
+    """Raised when a private key entry fails integrity verification --
+    either its stored key_id doesn't match the filename/identity it was
+    requested under (entry swapped or copied over a different file since
+    it was written), or AES-KW unwrap itself fails (should not happen
+    once open() has already verified the passphrase, given the key_id
+    check above already caught a mismatched identity)."""
 
 
 class PublicKeyIntegrityError(KeyDirectoryError):
@@ -796,6 +799,23 @@ class KeyDirectory:
             raise KeyNotFound(f"no private key found for {hex_id}")
 
         stored = StoredPrivateKeyEntry.load(path.read_bytes())
+
+        # The KEK is bound to the key_id embedded in the entry itself, not
+        # the filename it happens to be read from -- without this check, an
+        # attacker who can write to private/ could swap two otherwise-valid
+        # entries between each other's filenames (or copy one identity's
+        # entry over another's) and have it unwrap cleanly under the wrong
+        # identity, exactly the swap attack the public-key MAC is bound to
+        # the filename to prevent (see _mac_public_key_data).
+        if (
+            stored["key_id"]["hash_algorithm"]["algorithm"].dotted != _digest_oid("sha256")
+            or not _key_hash_equal(stored["key_id"]["key_hash"].native, bytes.fromhex(hex_id))
+        ):
+            raise PrivateKeyUnwrapFailed(
+                f"private key entry {hex_id} is stored under the wrong identity "
+                f"(tampered entry, or swapped with a different key's file on disk "
+                f"since it was written)"
+            )
 
         kek_salt = stored["kek_salt"].native
         wrapped_key = stored["wrapped_key"].native
