@@ -1,3 +1,5 @@
+"""Common utilities for KEM-MAKE."""
+
 class NonCanonicalEncoding(ValueError):
     """Raised when the input bytes parse but are not the unique DER encoding.
 
@@ -9,6 +11,7 @@ class NonCanonicalEncoding(ValueError):
 
 
 def require_der(cls, encoded_data: bytes, obj):
+    """Raise NonCanonicalEncoding if the input bytes are not canonical DER."""
     # force=True is essential here: asn1crypto's Sequence/Choice cache the
     # original parsed bytes and hand them straight back on a plain dump(),
     # so a naive dump() vs. input comparison is a silent no-op -- it just
@@ -21,5 +24,3 @@ def require_der(cls, encoded_data: bytes, obj):
             f"{cls.__name__}: input is not canonical DER (BER/non-minimal "
             f"encoding rejected)"
         )
-
-

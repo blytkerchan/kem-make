@@ -600,8 +600,11 @@ class KeyDirectory:
     def add_public_key(self, public_key: KemPublicKey | mlkem.MLKEM768PublicKey | mlkem.MLKEM1024PublicKey) -> KeyId:
         """Add a public key to the directory, returning its primary (SHA-256) KeyId. Raises
         DuplicateKey if the key is already present."""
-        if isinstance(public_key, mlkem.MLKEM768PublicKey) or isinstance(public_key, mlkem.MLKEM1024PublicKey):
-            public_key = KemPublicKey.build(public_key.public_bytes_raw(), level=768 if isinstance(public_key, mlkem.MLKEM768PublicKey) else 1024)
+        if isinstance(public_key, (mlkem.MLKEM768PublicKey, mlkem.MLKEM1024PublicKey)):
+            public_key = KemPublicKey.build(
+                public_key.public_bytes_raw(),
+                level=768 if isinstance(public_key, mlkem.MLKEM768PublicKey) else 1024,
+                )
         primary = self._primary_key_id(public_key)
         hex_id = self._hex_of(primary)
         path = self._public_path(hex_id)
