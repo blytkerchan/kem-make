@@ -52,7 +52,7 @@ Feature: Key directory lifecycle
     Then no file anywhere under that path contains the raw master key bytes
 
     Examples:
-      | passphrase                                                                        | iterations |
-      | correct horse battery staple                                                      | 100        |
+      | passphrase                                                                         | iterations |
+      | correct horse battery staple                                                       | 100        |
       | a                                                                                  | 1          |
       | a much longer passphrase than the others, well over sixty-four bytes long overall  | 500        |

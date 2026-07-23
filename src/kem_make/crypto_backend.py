@@ -36,6 +36,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM, ChaCha20Poly1305
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
 
+from kem_make.bottom import KemPublicKey
+
 
 class CryptoBackendUnsupported(RuntimeError):
     """Raised when the installed cryptography backend can't do something
@@ -119,6 +121,21 @@ def _check_hkdf(profile) -> None:
         raise CryptoBackendUnsupported(
             f"HKDF-SHA256 returned {len(derived)} bytes, expected 32."
         )
+
+
+def create_mlkem_private_key(level: int) -> tuple[KemPublicKey, bytes]:
+    """Create a new ML-KEM private key at the given level, or raise
+    CryptoBackendUnsupported if the backend can't do it.
+    """
+    try:
+        private_key =  MLKEM_BACKEND_CLASSES[level].generate()
+        public_key = private_key.public_key()
+        public_key_bytes = public_key.public_bytes_raw()
+        return KemPublicKey.build(public_key_bytes, level=level), private_key.private_bytes_raw()
+    except Exception as e:
+        raise CryptoBackendUnsupported(
+            f"ML-KEM-{level} key generation failed on this backend: {e!r}"
+        ) from e
 
 
 def check_backend() -> None:

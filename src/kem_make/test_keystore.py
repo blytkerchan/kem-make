@@ -33,6 +33,9 @@ Covers:
       iteration count, and verification tag -- never the key itself.
   14. AES Key Wrap (RFC 3394/5649) integrity: tampering with a stored
       wrapped_key is caught on unwrap and raises PrivateKeyUnwrapFailed.
+  15. add_public_key() accepts native mlkem.MLKEM768PublicKey /
+      MLKEM1024PublicKey objects directly, converting them to the
+      wire-format KemPublicKey internally, at the correct level.
 
 Run with: pytest test_keystore.py -v
 """
@@ -42,9 +45,10 @@ from unittest import mock
 
 import oschmod
 import pytest
+from cryptography.hazmat.primitives.asymmetric import mlkem
 
 from kem_make import KemPublicKey, KeyId, MLKEM_PK_LEN
-from kem_make.bottom import NonCanonicalEncoding
+from kem_make.common import NonCanonicalEncoding
 from kem_make.keystore import (
     KeyDirectory,
     WrongPassphrase,
@@ -776,3 +780,29 @@ def test_load_rejects_non_canonical_alt_index(tmp_path):
 
     with pytest.raises(NonCanonicalEncoding):
         kd.get_public_key(kid_sha384)
+
+
+# ---------------------------------------------------------------------------
+# 15. Native mlkem public key objects accepted by add_public_key()
+# ---------------------------------------------------------------------------
+
+def test_add_public_key_accepts_native_mlkem768_public_key(tmp_path):
+    native_pub = mlkem.MLKEM768PrivateKey.generate().public_key()
+    expected = KemPublicKey.build(native_pub.public_bytes_raw(), level=768)
+
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(native_pub)
+
+    assert key_id.dump() == KeyId.build(expected).dump()
+    assert kd.get_public_key(key_id).dump() == expected.dump()
+
+
+def test_add_public_key_accepts_native_mlkem1024_public_key(tmp_path):
+    native_pub = mlkem.MLKEM1024PrivateKey.generate().public_key()
+    expected = KemPublicKey.build(native_pub.public_bytes_raw(), level=1024)
+
+    kd = KeyDirectory.create(tmp_path / "kd", b"pass", iterations=_FAST_ITERATIONS)
+    key_id = kd.add_public_key(native_pub)
+
+    assert key_id.dump() == KeyId.build(expected).dump()
+    assert kd.get_public_key(key_id).dump() == expected.dump()

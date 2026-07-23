@@ -173,8 +173,10 @@ from cryptography.hazmat.primitives.keywrap import (
     aes_key_unwrap_with_padding,
     InvalidUnwrap,
 )
+from cryptography.hazmat.primitives.asymmetric import mlkem
 
-from .bottom import KemPublicKey, KeyId, _require_der
+from .bottom import KemPublicKey, KeyId
+from .common import require_der
 
 MASTER_KEY_LEN = 32          # 256-bit master key from PBKDF2
 KEK_LEN = 32                 # 256-bit per-key KEK from HKDF, for AES-256 Key Wrap
@@ -287,14 +289,14 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
         raise
 
 
-def _derive_master_key(passphrase: bytes, salt: bytes, iterations: int) -> bytearray:
+def _derive_master_key(passphrase: bytes | str, salt: bytes, iterations: int) -> bytearray:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=MASTER_KEY_LEN,
         salt=salt,
         iterations=iterations,
         )
-    return bytearray(kdf.derive(passphrase))
+    return bytearray(kdf.derive(passphrase.encode("utf-8") if isinstance(passphrase, str) else passphrase))
 
 
 def _derive_kek(master_key: bytes, salt: bytes, key_identity: bytes) -> bytearray:
@@ -356,7 +358,7 @@ class KeystoreHeader(Sequence):
     @classmethod
     def load(cls, encoded_data, strict: bool = True, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         return obj
 
 
@@ -387,7 +389,7 @@ class StoredPublicKeyEntry(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         return obj
 
 
@@ -404,7 +406,7 @@ class StoredPrivateKeyEntry(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         return obj
 
 
@@ -419,7 +421,7 @@ class AltIndexEntry(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         return obj
 
 
@@ -451,7 +453,7 @@ class AltIndexFile(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         return obj
 
 
@@ -474,7 +476,7 @@ class KeyDirectory:
     def create(
         cls,
         path,
-        passphrase: bytes,
+        passphrase: bytes | str,
         iterations: int = DEFAULT_PBKDF2_ITERATIONS,
         ) -> "KeyDirectory":
         """Create a new key directory at the given path, deriving the master key from the given
@@ -504,7 +506,7 @@ class KeyDirectory:
         return cls(path, master_key)
 
     @classmethod
-    def open(cls, path: str | Path, passphrase: bytes) -> "KeyDirectory":
+    def open(cls, path: str | Path, passphrase: bytes | str) -> "KeyDirectory":
         """Open an existing key directory at the given path, deriving the master key from the
         given passphrase and verifying it against the stored verification tag."""
         path = Path(path)
@@ -595,9 +597,11 @@ class KeyDirectory:
 
     # -- public keys -------------------------------------------------------
 
-    def add_public_key(self, public_key: KemPublicKey) -> KeyId:
+    def add_public_key(self, public_key: KemPublicKey | mlkem.MLKEM768PublicKey | mlkem.MLKEM1024PublicKey) -> KeyId:
         """Add a public key to the directory, returning its primary (SHA-256) KeyId. Raises
         DuplicateKey if the key is already present."""
+        if isinstance(public_key, mlkem.MLKEM768PublicKey) or isinstance(public_key, mlkem.MLKEM1024PublicKey):
+            public_key = KemPublicKey.build(public_key.public_bytes_raw(), level=768 if isinstance(public_key, mlkem.MLKEM768PublicKey) else 1024)
         primary = self._primary_key_id(public_key)
         hex_id = self._hex_of(primary)
         path = self._public_path(hex_id)

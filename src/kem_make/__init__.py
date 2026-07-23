@@ -7,6 +7,11 @@ this package's own README already import it. bottom.py itself remains the
 authoritative implementation; nothing here should contain logic.
 """
 
+from .common import (
+    # Exceptions
+    NonCanonicalEncoding,
+)
+
 from .bottom import (
     # Constants
     MLKEM_OIDS,
@@ -21,7 +26,6 @@ from .bottom import (
     UnknownKemAlgorithm,
     KemLengthMismatch,
     InvalidCorrelationId,
-    NonCanonicalEncoding,
     EmptyFalseStartPayload,
     # Structures
     KemPublicKey,

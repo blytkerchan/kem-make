@@ -51,6 +51,7 @@ import uuid
 from asn1crypto.core import Sequence, SequenceOf, OctetString, Integer, Choice, ObjectIdentifier
 from asn1crypto.algos import AlgorithmIdentifier, DigestAlgorithm
 
+from .common import require_der
 
 # ---------------------------------------------------------------------------
 # ML-KEM algorithm identifiers (RFC 9935)
@@ -102,16 +103,6 @@ class InvalidCorrelationId(ValueError):
     or otherwise looks invalid."""
 
 
-class NonCanonicalEncoding(ValueError):
-    """Raised when the input bytes parse but are not the unique DER encoding.
-
-    DER is deterministic: for any value there is exactly one valid DER
-    encoding. Re-dumping a correctly parsed object must therefore reproduce
-    the input byte-for-byte. If it doesn't, the input was BER (or otherwise
-    non-canonical) and must be rejected rather than silently accepted.
-    """
-
-
 class EmptyFalseStartPayload(ValueError):
     """Raised when SessionCompletionRequest.c_m is empty.
 
@@ -124,21 +115,6 @@ class EmptyFalseStartPayload(ValueError):
     false-start message. If there's no message to send yet, don't invoke
     the false-start optimization at all rather than sending an empty one.
     """
-
-
-def _require_der(cls, encoded_data: bytes, obj):
-    # force=True is essential here: asn1crypto's Sequence/Choice cache the
-    # original parsed bytes and hand them straight back on a plain dump(),
-    # so a naive dump() vs. input comparison is a silent no-op -- it just
-    # compares the cache against itself. force=True discards the cache and
-    # re-derives bytes from the parsed field values, which is the actual
-    # canonical DER re-encoding we need to compare against.
-    rebuilt = obj.dump(force=True)
-    if rebuilt != bytes(encoded_data):
-        raise NonCanonicalEncoding(
-            f"{cls.__name__}: input is not canonical DER (BER/non-minimal "
-            f"encoding rejected)"
-        )
 
 
 def kem_alg(oid: str) -> AlgorithmIdentifier:
@@ -173,7 +149,7 @@ class KemPublicKey(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         obj._validate_length() #pylint: disable=protected-access
         return obj
 
@@ -221,7 +197,7 @@ class KemCiphertext(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         obj._validate_length() #pylint: disable=protected-access
         return obj
 
@@ -340,7 +316,7 @@ class SessionCompletionRequest(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         obj._validate_c_m() #pylint: disable=protected-access
         return obj
 
@@ -406,7 +382,7 @@ class MakeMessage(Sequence):
     @classmethod
     def load(cls, encoded_data, strict=False, **kwargs):
         obj = super().load(encoded_data, strict=strict, **kwargs)
-        _require_der(cls, encoded_data, obj)
+        require_der(cls, encoded_data, obj)
         obj._validate_cid() #pylint: disable=protected-access
         return obj
 

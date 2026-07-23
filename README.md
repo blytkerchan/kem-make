@@ -323,7 +323,7 @@ these):
 - **DER-only, same as everywhere else in this project.** All four on-disk
   record types (`KeystoreHeader`, `StoredPublicKeyEntry`,
   `StoredPrivateKeyEntry`, `AltIndex`/`AltIndexEntry`) enforce DER
-  canonicality on `load()` via the same `_require_der` helper `bottom.py`
+  canonicality on `load()` via the same `require_der` helper `bottom.py`
   uses, confirmed by feeding each one a non-minimal-length BER encoding
   in `test_keystore.py` and checking it's rejected.
 

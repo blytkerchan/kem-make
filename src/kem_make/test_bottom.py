@@ -61,10 +61,12 @@ from .bottom import (
     UnknownKemAlgorithm,
     KemLengthMismatch,
     InvalidCorrelationId,
-    NonCanonicalEncoding,
     EmptyFalseStartPayload,
 )
 
+from .common import (
+    NonCanonicalEncoding,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
