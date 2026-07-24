@@ -137,13 +137,6 @@ def step_impl(context):
     assert isinstance(context.create_error, KeyDirectoryError), "Expected KeyDirectoryError exception, got: {}".format(type(context.create_error))
 
 
-@given(u'a key directory created with passphrase "pass"')
-def step_impl(context):
-    context.temp_dir = tempfile.TemporaryDirectory()
-    context.key_directory_path = Path(context.temp_dir.name) / "key_directory"
-    context.key_directory = KeyDirectory.create(context.key_directory_path, "pass")
-
-
 @then(u'the key directory itself is readable and writable only by its owner')
 def step_impl(context):
     assert oschmod.get_mode(str(context.key_directory_path)) & 0o777 == 0o700, "Key directory permissions are not 700"
