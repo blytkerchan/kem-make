@@ -123,7 +123,7 @@ def _check_hkdf(profile) -> None:
         )
 
 
-def create_mlkem_private_key(level: int) -> tuple[KemPublicKey, bytes]:
+def create_mlkem_keypair(level: int) -> tuple[KemPublicKey, bytes]:
     """Create a new ML-KEM private key at the given level, or raise
     CryptoBackendUnsupported if the backend can't do it.
     """

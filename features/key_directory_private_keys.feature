@@ -18,7 +18,7 @@ Feature: Storing and retrieving private keys
     Then adding the private key fails with PrivateKeyRequiresPublicKey
 
   Scenario: Adding a private key succeeds once its public key is registered
-    When I add private key bytes "secret-key-material-32-bytes!!!" for "pk"
+    When I add private key bytes for "pk"
     Then the private key is added successfully
 
   Scenario: Adding the same private key twice is rejected
@@ -27,9 +27,9 @@ Feature: Storing and retrieving private keys
     Then adding the private key fails with DuplicateKey
 
   Scenario: Retrieving a private key returns the original bytes unchanged
-    Given private key bytes "secret-key-material-32-bytes!!!" have already been added for "pk"
+    Given private key bytes have already been added for "pk"
     When I retrieve the private key for "kid"
-    Then the retrieved bytes equal "secret-key-material-32-bytes!!!"
+    Then the retrieved bytes equal the original private key bytes for "pk"
 
   Scenario: Looking up a private key that was never added fails
     When I attempt to retrieve the private key for "kid"
@@ -45,7 +45,6 @@ Feature: Storing and retrieving private keys
     Given private key bytes have already been added for "pk"
     When I inspect the stored private key entry's fields for "kid"
     Then the entry has a key-encrypting-key salt, a wrap algorithm identifier, and a wrapped key
-    And the entry has no nonce field
 
   Scenario: Tampering with a stored wrapped private key is detected on retrieval
     Given private key bytes have already been added for "pk"

@@ -4,7 +4,7 @@ from behave.api.pending_step import StepNotImplementedError
 from asn1crypto.core import Sequence, SequenceOf, OctetString, Integer, Choice, ObjectIdentifier
 import oschmod
 
-from kem_make.crypto_backend import create_mlkem_private_key
+from kem_make.crypto_backend import create_mlkem_keypair
 from kem_make.keystore import KeyDirectory, KeyDirectoryError, WrongPassphrase
 from kem_make.common import require_der
 
@@ -169,7 +169,7 @@ def step_impl(context):
 
 @when(u'I add a public key and a private key to it')
 def step_impl(context):
-    context.private_key = create_mlkem_private_key(level=768)    
+    context.private_key = create_mlkem_keypair(level=768)    
     context.key_directory.add_public_key(context.private_key[0])
     context.key_directory.add_private_key(*context.private_key)
 
