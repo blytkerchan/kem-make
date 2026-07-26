@@ -15,10 +15,6 @@ def step_impl(context):
     context.kid = context.key_directory.add_public_key(context.pk[0])
 
 
-@given(u'a second valid ML-KEM-768 KemPublicKey "unregistered_pk" that was never added')
-def step_impl(context):
-    context.unregistered_key = create_mlkem_keypair(level=768)
-
 @when(u'I attempt to add private key bytes for "unregistered_pk"')
 def step_impl(context):
     try:

@@ -26,8 +26,8 @@ Feature: Storing and retrieving public keys
     Then the retrieved key is byte-for-byte identical to "pk"
 
   Scenario: Looking up a KeyId that was never added fails
-    Given a second valid ML-KEM-768 KemPublicKey "other_pk" that was never added
-    When I compute the primary KeyId of "other_pk" without adding it
+    Given a second valid ML-KEM-768 KemPublicKey "unregistered_pk" that was never added
+    When I compute the primary KeyId of "unregistered_pk" without adding it
     And I attempt to retrieve the public key for that KeyId
     Then retrieving the public key fails with KeyNotFound
 
