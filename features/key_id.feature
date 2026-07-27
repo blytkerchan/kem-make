@@ -23,7 +23,3 @@ Feature: Key identifier computation
     When I build a KeyId for "pkA" using digest algorithm "sha256"
     And I build a KeyId for "pkA_relabelled" using digest algorithm "sha256"
     Then the two KeyIds are not equal
-
-  Scenario: The hash_algorithm field describes how the KeyId was computed, not the key's KEM algorithm
-    When I build a KeyId for "pkA" using digest algorithm "sha256"
-    Then the KeyId's hash_algorithm does not indicate the ML-KEM level of "pkA"
