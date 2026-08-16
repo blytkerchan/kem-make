@@ -235,8 +235,24 @@ jobs:
             exit 0
           fi
 
+          # Not `gh pr merge --auto`: that calls the GraphQL
+          # enablePullRequestAutoMerge mutation, and as of GitHub's
+          # undocumented 2026-03-25 behaviour change that mutation refuses to
+          # activate unless every check on the commit is already passing -
+          # including this job's own check run, which is still `in_progress`
+          # at this exact point because the job that would report it
+          # completed hasn't finished yet. That is a permanent, structural
+          # deadlock, not a race that clears on retry: it fails every time
+          # with "GraphQL: Pull request Pull request is in unstable status
+          # (enablePullRequestAutoMerge)" (see terraform-modules#203 for a
+          # concrete run of this).
+          #
+          # It is also unnecessary. `--auto` exists to wait for checks that
+          # are not yet green; the polling step above already did that
+          # waiting by hand. So merge directly instead of asking GitHub to
+          # enable a wait that has no reason to be running.
           gh pr review --approve "$PR_URL"
-          gh pr merge --auto --squash "$PR_URL"
+          gh pr merge --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           SHA: ${{ github.event.pull_request.head.sha }}
