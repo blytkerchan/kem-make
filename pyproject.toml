@@ -36,7 +36,7 @@ dependencies = [
 # on the canonical AlgorithmIdentifier{} construct). pytest runs the test
 # suite; behave runs features/.
 dev = [
-    "asn1tools==0.167.0",
+    "asn1tools==0.169.0",
     "pytest==9.1.1",
     "behave==1.3.3",
     "coverage",
