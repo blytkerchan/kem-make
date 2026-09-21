@@ -23,7 +23,7 @@ dependencies = [
     # an older system OpenSSL). Run crypto_backend.py's check_backend()
     # at application startup to verify the backend is actually
     # functional, not just importable.
-    "cryptography==49.0.0",
+    "cryptography==50.0.1",
 
     "oschmod>=0.2.2",
 ]
