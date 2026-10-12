@@ -126,7 +126,6 @@ SessionInitRequest ::= SEQUENCE {
 }
 
 SessionInitResponse ::= SEQUENCE {
-    keyIdB      KeyId,
     pkBStar     KemPublicKey,
     ct2         KemCiphertext,
     ct3         KemCiphertext,

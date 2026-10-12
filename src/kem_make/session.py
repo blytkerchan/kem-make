@@ -649,7 +649,6 @@ class Session:
             raise HandshakeFailed("no mutually acceptable AEAD algorithm")
 
         resp = SessionInitResponse({
-            "key_id_b": req["key_id_b"],
             "pk_b_star": own_ephemeral_public,
             "ct2": ct2,
             "ct3": ct3,
@@ -740,9 +739,6 @@ class Session:
     def _handle_session_init_response(self, msg: MakeMessage, der_bytes: bytes, now: float) -> None:
         #pylint: disable=too-many-locals
         resp = msg["payload"].chosen
-
-        if not _key_id_equal(resp["key_id_b"], self._peer_key_id):
-            raise HandshakeFailed("session_init_response key_id_b does not match the identity we addressed")
 
         level = self.config.kem_level
         own_static_private = self._keys.get_private_key(self._own_key_id)

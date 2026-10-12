@@ -47,14 +47,14 @@ Feature: KEM-MAKE handshake messages
   Scenario: A session-init-response carries a key id, ephemeral public key, two ciphertexts, a nonce, and the chosen AEAD
     Given a second valid ML-KEM-768 KemCiphertext "ct2"
     And a nonce "nB" of 16 bytes
-    When I build a SessionInitResponse with key_id_b="kid", pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB", chosen_aead="aes256-gcm"
+    When I build a SessionInitResponse with pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB", chosen_aead="aes256-gcm"
     Then the SessionInitResponse round-trips through DER encoding unchanged
     And its chosen_aead field is "aes256-gcm"
 
   Scenario: A session-init-response cannot omit the chosen AEAD
     Given a second valid ML-KEM-768 KemCiphertext "ct2"
     And a nonce "nB" of 16 bytes
-    When I attempt to build a SessionInitResponse with key_id_b="kid", pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB" and no chosen_aead
+    When I attempt to build a SessionInitResponse with pk_b_star="pk", ct2="ct", ct3="ct2", n_b="nB" and no chosen_aead
     Then encoding the SessionInitResponse fails
 
   Scenario: A session-completion-request's cM is itself the false-start payload

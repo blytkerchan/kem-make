@@ -271,7 +271,6 @@ class SessionInitRequest(Sequence):
 class SessionInitResponse(Sequence):
     """Session initiation response from Bob."""
     _fields = [
-        ("key_id_b", KeyId),
         ("pk_b_star", KemPublicKey),
         ("ct2", KemCiphertext),
         ("ct3", KemCiphertext),

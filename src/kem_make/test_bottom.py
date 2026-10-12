@@ -373,7 +373,6 @@ def test_session_init_response_chosen_aead_round_trips():
     pk = _pk()
     ct = _ct()
     resp = SessionInitResponse({
-        "key_id_b": KeyId.build(pk),
         "pk_b_star": pk,
         "ct2": ct,
         "ct3": ct,
@@ -388,7 +387,6 @@ def test_session_init_response_chosen_aead_round_trips():
 @pytest.mark.parametrize("name", ["aes256-gcm", "chacha20-poly1305"])
 def test_all_known_aead_oids_round_trip(name):
     resp = SessionInitResponse({
-        "key_id_b": KeyId.build(_pk()),
         "pk_b_star": _pk(),
         "ct2": _ct(),
         "ct3": _ct(),

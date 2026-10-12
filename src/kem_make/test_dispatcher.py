@@ -34,7 +34,7 @@ import kem_make.session as session_module
 
 from .conftest import _make_identity
 
-def _forge_session_init_response(cid, bob_kid, alice_pub, aead="aes256-gcm"):
+def _forge_session_init_response(cid, alice_pub, aead="aes256-gcm"):
     """Builds a structurally valid SessionInitResponse using only PUBLIC
     information -- exactly what a forger can do without holding Bob's
     (or anyone's) private key. Mirrors _handle_session_init_request's
@@ -48,7 +48,6 @@ def _forge_session_init_response(cid, bob_kid, alice_pub, aead="aes256-gcm"):
     _, forged_ct2 = session_module._encapsulate(alice_pub)
     _, forged_ct3 = session_module._encapsulate(alice_pub)
     resp = SessionInitResponse({
-        "key_id_b": bob_kid,
         "pk_b_star": forger_ephemeral_pub,
         "ct2": forged_ct2,
         "ct3": forged_ct3,
@@ -107,7 +106,7 @@ def test_forged_response_first_then_real_response_still_establishes_with_bob(par
     request = alice_disp.get_pdu()
     real_response = _run_bob(bob, request, now=0.0)
 
-    forged_response = _forge_session_init_response(cid, parties["bob_kid"], parties["alice_pub"])
+    forged_response = _forge_session_init_response(cid, parties["alice_pub"])
 
     # Forged response arrives FIRST.
     alice_disp.post_pdu(forged_response, now=0.0)
@@ -145,7 +144,7 @@ def test_real_response_first_then_forged_response_still_establishes_with_bob(par
     alice_disp.post_pdu(real_response, now=0.0)
     alice_disp.update(now=0.0)
 
-    forged_response = _forge_session_init_response(cid, parties["bob_kid"], parties["alice_pub"])
+    forged_response = _forge_session_init_response(cid, parties["alice_pub"])
     alice_disp.post_pdu(forged_response, now=0.0)
     alice_disp.update(now=0.0)
     assert len(alice_disp._initiator_forks[cid]) == 2
@@ -171,7 +170,7 @@ def test_forger_cannot_complete_even_if_they_try_to_respond_to_their_own_fork(pa
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     alice_disp.get_pdu()  # the original request; irrelevant to this test
 
-    forged_response = _forge_session_init_response(cid, parties["bob_kid"], parties["alice_pub"])
+    forged_response = _forge_session_init_response(cid, parties["alice_pub"])
     alice_disp.post_pdu(forged_response, now=0.0)
     alice_disp.update(now=0.0)
 
@@ -223,7 +222,7 @@ def test_per_cid_candidate_cap_bounds_forks(parties):
     alice_disp.get_pdu()
 
     for _ in range(5):
-        forged = _forge_session_init_response(cid, parties["bob_kid"], parties["alice_pub"])
+        forged = _forge_session_init_response(cid, parties["alice_pub"])
         alice_disp.post_pdu(forged, now=0.0)
         alice_disp.update(now=0.0)
 
@@ -277,7 +276,7 @@ def test_promotion_clears_siblings_immediately_not_next_tick(parties):
     request = alice_disp.get_pdu()
     real_response = _run_bob(bob, request, now=0.0)
 
-    forged_response = _forge_session_init_response(cid, parties["bob_kid"], parties["alice_pub"])
+    forged_response = _forge_session_init_response(cid, parties["alice_pub"])
     alice_disp.post_pdu(forged_response, now=0.0)
     alice_disp.update(now=0.0)
     alice_disp.post_pdu(real_response, now=0.0)
@@ -339,7 +338,7 @@ def test_post_payload_reaches_already_live_forks_too(parties):
     cid = alice_disp.initiate(parties["alice_kid"], parties["bob_kid"], now=0.0)
     alice_disp.get_pdu()
 
-    forged = _forge_session_init_response(cid, parties["bob_kid"], parties["alice_pub"])
+    forged = _forge_session_init_response(cid, parties["alice_pub"])
     alice_disp.post_pdu(forged, now=0.0)
     alice_disp.update(now=0.0)
     assert len(alice_disp._initiator_forks[cid]) == 1
