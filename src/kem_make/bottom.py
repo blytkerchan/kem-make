@@ -346,6 +346,15 @@ class Message(Sequence):
         ("seq", Integer),
         ("m", OctetString),
     ]
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if 'implicit' in kwargs or 'explicit' in kwargs:
+            return  # Skip validation for implicit/explicit context
+        if "seq" not in self or not isinstance(self["seq"], Integer) or self["seq"].native is None:
+            raise ValueError("Message must have a 'seq' field")
+        if "m" not in self or not isinstance(self["m"], OctetString) or self["m"].native is None:
+            raise ValueError("Message must have an 'm' field")
 
 
 class MakePayload(Choice):
