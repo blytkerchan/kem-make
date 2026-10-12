@@ -162,7 +162,7 @@ SessionCompletionResponse ::= SEQUENCE {
 -- must be unique, not seq alone.
 Message ::= SEQUENCE {
     seq  INTEGER,
-    m    OCTET STRING
+    m    OCTET STRING  -- encrypted application message, arbitrary length
 }
 
 MakePayload ::= CHOICE {
