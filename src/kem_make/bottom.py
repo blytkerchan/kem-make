@@ -346,7 +346,7 @@ class Message(Sequence):
         ("seq", Integer),
         ("m", OctetString),
     ]
-    
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if 'implicit' in kwargs or 'explicit' in kwargs:
